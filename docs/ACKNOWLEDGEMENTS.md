@@ -26,7 +26,6 @@ The project uses or may use common Python libraries for analysis, modelling, and
 These libraries support data cleaning, feature engineering, model training, evaluation, and visualisation.
 
 ## Project Team
-- Jean Van Schalkwyk
 - MercMinds
 
 We would like to acknowledge the organisers, partners, and open-source community whose tools and challenge materials made this work possible.
