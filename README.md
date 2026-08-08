@@ -1,88 +1,59 @@
-# Predictive Insight Hackathon Submission
+# MercMinds: Labour Market Status Prediction
 
----
+This project addresses the Predictive Insights labour market challenge, where the goal is to predict whether a participant is employed in Round 9 of a longitudinal youth survey using data from earlier rounds.
 
-## 📂 Repository Structure
-```
+## Overview
+South Africa has one of the highest youth unemployment rates globally, and understanding who moves into and out of work is essential for labour market policy and economic planning. In this challenge, we use anonymised historical panel data to estimate the probability that each participant is employed in Round 9.
+
+The dataset includes demographic, geographic, educational, and labour market history information. Our task is to build a model that learns from this longitudinal behaviour and predicts employment status as a binary target, evaluated using AUC.
+
+## Problem Statement
+Each participant is tracked across multiple survey rounds. The task is to predict whether they are employed in Round 9, based on their earlier-round characteristics and labour-market history.
+
+This is a real-world machine learning problem involving:
+- Longitudinal panel data
+- Demographic and socioeconomic features
+- Missing or noisy survey data
+- Binary classification with class imbalance
+- Evaluation by AUC rather than simple accuracy
+
+## Objective
+Build a predictive model that assigns a probability of employment for each participant in the Round 9 cohort. The target is to maximise ranking quality on the hidden test set, measured by AUC.
+
+## Project Focus
+This repository provides the base structure for:
+- Exploratory data analysis
+- Feature engineering across survey rounds
+- Baseline modelling and benchmarking
+- Model comparison and submission preparation
+- Documentation and project reporting
+
+## Repository Structure
+```text
 ├── assets/
-│   └── README.md
 ├── demo/
-│   ├── OVERVIEW.md
-│   └── README.md
 ├── docs/
-│   ├── ACKNOWLEDGEMENTS.md
-│   ├── SETUP.md
-│   ├── TEAM.md
-│   └── USAGE.md
 ├── scripts/
-│   └── README.md
 ├── src/
-│   └── README.md
-│   └── backend/
-│   └── frontend/
-
-├── vendor/
-│   └── README.md
-├── .dockerignore
-├── .editorconfig
-├── .gitattributes
-├── .gitignore
-├── Dockerfile
+├── train.csv
+├── test.csv
+├── README.md
 ├── LICENSE
-└── README.md
+└── package.json
 ```
----
 
-### 🔹 Description of Each Folder/File
+## Evaluation
+Submissions are evaluated using the Area Under the ROC Curve (AUC), which measures how well the model ranks participants by likelihood of being employed. A score closer to 1.0 indicates stronger discrimination.
 
-- **assets/**  
-    All assets used by your project such as **images**, **audio files**, **3D models**, **datasets** and so-on, should be placed in this folder.
+## Challenge Context
+Hosted by Predictive Insights in collaboration with the Alphawave Group and Harambee, the challenge is designed to explore how data science and AI can help understand unemployment and opportunity in South Africa.
 
-- **demo/**  
-    Your **demo video**, **PowerPoint presentation**, **Overview readme doc** and or any **examples** should be placed in this folder.
+## Team
+MercMinds
 
-- **docs/**  
-    Contains essential documentation about your team and project (these must be written by you):
-    - `ACKNOWLEDGEMENTS.md` → References all third-party libraries and sources used
-    - `SETUP.md` → Instructions for installing dependencies and running the project  
-    - `TEAM.md` → Team member names, roles, and contact info  [if worked with people]
-    - `USAGE.md` → Instructions for using or testing the project 
-
-- **scripts/**  
-    All **utility**, **automation** and **project-management** scripts should be placed in this folder.
-
-- **src/**  
-    All source code files should be placed in this folder. You may organize this folder as needed (e.g., `backend/`, `frontend/`, `lib/`, `source/` and or `include/` folders and so on).
-
-- **vendor/**  
-    All third-party libraries, code and or submodules should be placed in this folder along **with the appropriate licensing and or references**. If you are not able to link the modules from this folder to your codebase properly, you may put the third-party modules inside the `src/` folder with the rest of your code however, it **must be made clear** which modules are **third-party**, along with their **licensing**.
-    Since many tech-stacks already use package managers, this `vendor/` folder is for self-included libraries, dependencies and submodules. **Auto-generated** dependency folders like `node_modules/` or `nuget/` should ideally be ignored by `.gitignore`.
-
-- **.dockerignore**  
-    Excludes build artifacts and other non-essential files from the Docker image. *You may delete this file if you do not plan on using Docker.*
-
-- **.editorconfig**  
-    Standardizes indentation, line endings, and character encoding across editors and platforms. It is **highly recommended** that you use a text editor/IDE that supports **.editorconfig**.
-
-- **.gitattributes**  
-    Ensures consistent handling of line endings, text, and binary files across different operating systems.
-
-- **.gitignore**  
-    Ignores build artifacts, OS files, IDE configs, and other non-essential files to keep the repository clean.
-
-- **Dockerfile**  
-    A "quick start" template **Dockerfile** to serve as a blueprint for containerizing your project in a **Docker image**. *You may delete this file if you do not plan on using Docker.*
-
-- **LICENSE**  
-    Default license template for your submission (MIT recommended).
-    *You must add the names of your team members to this template.*
-
-- **README.md**  
-    This file
+## Status
+This repository is being used to develop the modelling workflow and supporting documentation for the hackathon challenge.
 
 ---
 
-
-
-- [Linkin Profile](https://www.linkedin.com/in/moegamatsamsodien/)
-- [Portfolio](https://moegamat-samsodien-portfolio.vercel.app/)
+Jean Van Schalkwyk

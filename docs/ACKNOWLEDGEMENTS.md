@@ -1,20 +1,32 @@
-This document serves as a template for you to list all third-party repos, modules, libraries, frameworks and or datasets used and credit their authors.
+# Acknowledgements
 
-Please fill this out to give proper credit and help judges understand external dependencies.
+This project is built around the Labour Market Status Prediction Challenge and uses challenge-provided data, organiser materials, and standard open-source data science tools.
 
-List only the external resources you used directly. Do not include system libraries or standard runtimes (e.g., Python VCRuntime, Java SDK).
+## Challenge Organisers and Partners
+- Predictive Insights — challenge host and data provider
+- Alphawave Group — collaboration partner
+- Harambee — collaboration partner
+- University of Cape Town (UCT) — competition venue and host institution
 
-Acknowledgements
-This document lists all third-party repositories, modules, libraries, frameworks, APIs, and datasets used in this project.
+## Data and Challenge Materials
+- Labour Market Status Prediction Challenge dataset — anonymised longitudinal youth labour market data used for training and evaluation
+- Starter notebooks in Python and R — provided as part of the competition to support exploration and baseline modelling
+- Competition documentation and evaluation framework — provided by the challenge organisers
 
-📦 Libraries, Frameworks & Submodules
-Name	Link / Repo	Author(s)	Usage
-IntricatePointers	https://github.com/DnA-IntRicate/IntricatePointers	Adam Foflonker	Memory management
-fast_obj	https://github.com/thisistherk/fast_obj	Richard Knight	Parsing OBJ files
-🌐 APIs & Services
-Name	Link / Docs	Author(s)	Usage
-OpenWeather	https://openweathermap.org/api	Open Weather	Fetching weather data
-Stripe	https://stripe.com/docs/api	Stripe	Payment handling
-📊 Datasets
-Name	Source	Usage
-MNIST	http://yann.lecun.com/exdb/mnist/	Training/testing machine learning
+## Open-Source Libraries
+The project uses or may use common Python libraries for analysis, modelling, and validation, including:
+- Python
+- pandas
+- NumPy
+- scikit-learn
+- matplotlib
+- seaborn
+- Jupyter Notebook
+
+These libraries support data cleaning, feature engineering, model training, evaluation, and visualisation.
+
+## Project Team
+- Jean Van Schalkwyk
+- MercMinds
+
+We would like to acknowledge the organisers, partners, and open-source community whose tools and challenge materials made this work possible.
