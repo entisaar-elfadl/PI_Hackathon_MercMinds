@@ -44,6 +44,9 @@ export function ModelComparisonTable({ comparisons }: ModelComparisonTableProps)
                   <th className="py-3 px-4 text-center">Round 6 AUC</th>
                   <th className="py-3 px-4 text-center">Round 7 AUC</th>
                   <th className="py-3 px-4 text-center">Round 8 AUC</th>
+                  {comparisons.some(m => m.roundScores.custom !== null) && (
+                    <th className="py-3 px-4 text-center text-blue-600 bg-blue-50/50 font-bold">Real Round AUC</th>
+                  )}
                   <th className="py-3 px-4 text-right">Avg AUC</th>
                   <th className="py-3 px-4 text-center">Min / Max AUC</th>
                   <th className="py-3 px-4 text-right">Std Dev (SD)</th>
@@ -101,6 +104,13 @@ export function ModelComparisonTable({ comparisons }: ModelComparisonTableProps)
                       <td className="py-3.5 px-4 text-center font-mono font-medium text-slate-600">
                         {m.roundScores.round_8 !== null ? m.roundScores.round_8.toFixed(4) : <span className="text-slate-300">—</span>}
                       </td>
+
+                      {/* Custom score */}
+                      {comparisons.some(x => x.roundScores.custom !== null) && (
+                        <td className="py-3.5 px-4 text-center font-mono font-bold text-blue-600 bg-blue-500/5 border-x border-blue-500/10">
+                          {m.roundScores.custom !== null ? m.roundScores.custom.toFixed(4) : <span className="text-slate-300">—</span>}
+                        </td>
+                      )}
 
                       {/* Avg AUC */}
                       <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800 text-sm">

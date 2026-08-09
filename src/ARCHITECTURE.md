@@ -98,11 +98,14 @@ Using external Canvas or charting libraries introduces dependency weight and ris
 Experiment tracking uses `localStorage` to save model metadata, versioning, run timestamp, notes, and AUC. On initialization, if no history is present, the app seeds historical benchmarks (XGBoost base, Logistic Baseline) to immediately provide a rich comparative view.
 * **Inline State Confirmations:** To operate safely in cross-origin iframe preview environments (where standard blocking `window.confirm()` APIs are restricted or blocked), we use explicit React-state confirmation indicators (`showClearConfirm` and `deletingId`). This eliminates blocking calls and allows elegant cancel/confirm actions.
 
-### 6. CSV Format Placeholders (`/predictions/`)
-To help users format and place predictions properly:
-* `/predictions/placeholder_predictions.csv`: Features exact column headers (`anonymised_id`, `employed_status`) with probability bounds (`0.0` - `1.0`).
-* `/predictions/placeholder_ground_truth.csv`: Features exact headers and binary actual values (`0` or `1`).
-* These starter files can be downloaded directly inside the application for convenience.
+### 6. CSV Format Placeholders & Real Rounds Workspace (`/original_rounds/`)
+To help users format, place, and keep track of original datasets:
+* `/original_rounds/README.md`: Explains how the user can place and store their actual real-world validation datasets inside this folder in the repository.
+* `/original_rounds/place_real_ground_truth_here.csv`: Template file for mapping the real survey ground-truth answers.
+* `/original_rounds/place_real_predictions_here.csv`: Template file for mapping real model prediction probabilities.
+* The application provides a dual evaluation selector:
+  1. **Practice Sandbox Mode**: For evaluating predictions against simulated rounds generated client-side.
+  2. **Real Evaluation Mode**: For uploading and testing model results against original, real survey rounds.
 
 ### 7. Frosted Glass Design System Integration
 To establish a premium, high-tech engineering feel, the application has been designed with a custom **Frosted Glass (Glassmorphism)** dark aesthetic:

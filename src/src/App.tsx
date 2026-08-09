@@ -230,7 +230,7 @@ export default function App() {
     experiments.forEach(e => {
       const key = `${e.modelName.toLowerCase().trim()}-v${e.modelVersion.trim()}`;
       if (!modelMap.has(key)) {
-        modelMap.set(key, { round_6: null, round_7: null, round_8: null });
+        modelMap.set(key, { round_6: null, round_7: null, round_8: null, custom: null });
         modelMeta.set(key, { name: e.modelName, version: e.modelVersion });
       }
       const roundScores = modelMap.get(key)!;
@@ -250,6 +250,7 @@ export default function App() {
       if (scores.round_6 !== null) validScores.push(scores.round_6);
       if (scores.round_7 !== null) validScores.push(scores.round_7);
       if (scores.round_8 !== null) validScores.push(scores.round_8);
+      if (scores.custom !== null) validScores.push(scores.custom);
 
       const count = validScores.length;
       if (count === 0) return;

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type RoundId = 'round_6' | 'round_7' | 'round_8';
+export type RoundId = 'round_6' | 'round_7' | 'round_8' | 'custom';
 
 export interface RoundConfig {
   id: RoundId;
