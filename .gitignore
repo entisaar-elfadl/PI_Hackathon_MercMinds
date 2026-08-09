@@ -10,4 +10,3 @@ test.csv
 train.csv
 submission_baseline.csv
 submission_upgraded.csv
-*.csv
