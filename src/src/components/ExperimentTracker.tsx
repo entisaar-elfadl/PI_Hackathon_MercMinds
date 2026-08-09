@@ -4,7 +4,7 @@
  */
 
 import { useState } from 'react';
-import { Search, Calendar, FileCode, Trash2, ClipboardList, Eye } from 'lucide-react';
+import { Search, Calendar, FileCode, Trash2, ClipboardList, Eye, Check, X } from 'lucide-react';
 import { Experiment, RoundId } from '../types';
 
 interface ExperimentTrackerProps {
@@ -22,6 +22,8 @@ export function ExperimentTracker({
 }: ExperimentTrackerProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [roundFilter, setRoundFilter] = useState<string>('all');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filteredExperiments = experiments.filter(e => {
     const matchesSearch =
@@ -78,17 +80,38 @@ export function ExperimentTracker({
           </p>
         </div>
         {experiments.length > 0 && (
-          <button
-            onClick={() => {
-              if (confirm('Are you sure you want to clear your local evaluation history? This cannot be undone.')) {
-                onClearAll();
-              }
-            }}
-            className="px-3 py-1.5 border border-rose-200 text-rose-600 hover:bg-rose-50 font-semibold text-xs rounded-xl active:scale-95 transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-center"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Clear Ledger
-          </button>
+          <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+            {showClearConfirm ? (
+              <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-xl p-1 animate-in fade-in zoom-in duration-200">
+                <span className="text-[10px] font-bold text-rose-700 px-2">Are you sure?</span>
+                <button
+                  onClick={() => {
+                    onClearAll();
+                    setShowClearConfirm(false);
+                  }}
+                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Check className="w-3 h-3" />
+                  Yes, Clear
+                </button>
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowClearConfirm(true)}
+                className="px-3 py-1.5 border border-rose-200 text-rose-600 hover:bg-rose-50 font-semibold text-xs rounded-xl active:scale-95 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Ledger
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -188,17 +211,36 @@ export function ExperimentTracker({
                       >
                         <Eye className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this experiment from the local ledger?')) {
-                            onDeleteExperiment(exp.id);
-                          }
-                        }}
-                        className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg active:scale-95 transition-all"
-                        title="Delete record"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {deletingId === exp.id ? (
+                        <div className="flex items-center gap-1 bg-rose-50 border border-rose-100 rounded-lg p-0.5 animate-in fade-in zoom-in duration-150">
+                          <span className="text-[9px] font-bold text-rose-700 px-1">Sure?</span>
+                          <button
+                            onClick={() => {
+                              onDeleteExperiment(exp.id);
+                              setDeletingId(null);
+                            }}
+                            className="p-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-md cursor-pointer transition-colors"
+                            title="Confirm delete"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => setDeletingId(null)}
+                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-md cursor-pointer transition-colors"
+                            title="Cancel"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeletingId(exp.id)}
+                          className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg active:scale-95 transition-all cursor-pointer"
+                          title="Delete record"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
