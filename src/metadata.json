@@ -1,0 +1,6 @@
+{
+  "name": "Employment Prediction Local Evaluator",
+  "description": "A local Kaggle-style validation and evaluation system to test employment prediction models against historical survey rounds.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
