@@ -1,0 +1,6 @@
+{
+  "name": "Employment Prediction Evaluator",
+  "description": "Local Kaggle-style historical evaluation system for the Employment Prediction Competition with ROC AUC calculation and model tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
