@@ -18,7 +18,6 @@ import { Leaderboard } from './components/Leaderboard';
 import { DatasetDownloader } from './components/DatasetDownloader';
 import { ModelComparisonTable } from './components/ModelComparisonTable';
 import { ExperimentTracker } from './components/ExperimentTracker';
-import { UnitTestsRunner } from './components/UnitTestsRunner';
 
 // Seed default benchmark experiments for a professional first-time load
 const BENCHMARK_EXPERIMENTS: Experiment[] = [
@@ -129,7 +128,7 @@ const BENCHMARK_EXPERIMENTS: Experiment[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'evaluator' | 'comparison' | 'ledger' | 'datasets' | 'unittests'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'evaluator' | 'comparison' | 'ledger' | 'datasets'>('dashboard');
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [activeResult, setActiveResult] = useState<EvaluationResult | null>(null);
 
@@ -296,13 +295,11 @@ export default function App() {
               <BrainCircuit className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-sm tracking-tight text-white">KaggleLocal</span>
-                <span className="text-[8px] bg-blue-500/10 text-blue-400 px-1 py-0.5 rounded font-black uppercase tracking-wider">
-                  PRO
-                </span>
+              <div className="flex flex-col">
+                <span className="font-extrabold text-sm tracking-tight text-white leading-tight">Employment</span>
+                <span className="font-bold text-xs tracking-tight text-blue-400 leading-tight">Predictor</span>
               </div>
-              <p className="text-[10px] text-slate-500 mt-0.5 font-bold tracking-wide uppercase">Local Eval Console</p>
+              <p className="text-[9px] text-slate-500 mt-1 font-bold tracking-wide uppercase">by MercMinds</p>
             </div>
           </div>
         </div>
@@ -328,9 +325,9 @@ export default function App() {
                     setActiveTab(tab.id as any);
                     if (tab.id !== 'evaluator') setActiveResult(null);
                   }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left font-semibold ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left font-semibold cursor-pointer ${
                     isActive
-                      ? 'bg-slate-800/50 border-slate-700 text-blue-400 shadow-md shadow-slate-950/40'
+                       ? 'bg-slate-800/50 border-slate-700 text-blue-400 shadow-md shadow-slate-950/40'
                       : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/30'
                   }`}
                 >
@@ -343,10 +340,9 @@ export default function App() {
 
           {/* Section: Utilities */}
           <div className="space-y-1">
-            <div className="text-[10px] uppercase text-slate-500 font-bold tracking-widest px-3 mb-2">Utilities & Tests</div>
+            <div className="text-[10px] uppercase text-slate-500 font-bold tracking-widest px-3 mb-2">Utilities</div>
             {[
               { id: 'datasets', label: 'Survey Datasets', icon: FileSpreadsheet },
-              { id: 'unittests', label: 'Mathematical Tests', icon: ShieldCheck },
             ].map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -357,9 +353,9 @@ export default function App() {
                     setActiveTab(tab.id as any);
                     if (tab.id !== 'evaluator') setActiveResult(null);
                   }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left font-semibold ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left font-semibold cursor-pointer ${
                     isActive
-                      ? 'bg-slate-800/50 border-slate-700 text-blue-400 shadow-md shadow-slate-950/40'
+                       ? 'bg-slate-800/50 border-slate-700 text-blue-400 shadow-md shadow-slate-950/40'
                       : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/30'
                   }`}
                 >
@@ -391,24 +387,6 @@ export default function App() {
 
         </nav>
 
-        {/* Sidebar Footer User Card */}
-        <div className="p-4 border-t border-slate-800/80 bg-slate-950/80">
-          <div className="flex items-center gap-3">
-            <div className="relative shrink-0">
-              <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-xs font-bold text-blue-300">
-                RA
-              </div>
-              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border border-slate-950 animate-pulse" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-bold text-white truncate">Architect Alpha</div>
-              <div className="text-[9px] text-slate-500 truncate" title="rashaadsm2004@gmail.com">
-                rashaadsm2004@gmail.com
-              </div>
-            </div>
-          </div>
-        </div>
-
       </aside>
 
       {/* 2. MOBILE HEADER & NAVIGATION (Small screens) */}
@@ -419,8 +397,8 @@ export default function App() {
               <BrainCircuit className="w-4 h-4" />
             </div>
             <div>
-              <span className="font-extrabold text-xs text-white tracking-tight">KaggleLocal</span>
-              <span className="text-[8px] bg-blue-500/15 text-blue-400 px-1 py-0.5 ml-1.5 rounded font-black">PRO</span>
+              <span className="font-extrabold text-xs text-white tracking-tight">Employment Predictor</span>
+              <span className="text-[8px] bg-blue-500/15 text-blue-400 px-1 py-0.5 ml-1.5 rounded font-black">by MercMinds</span>
             </div>
           </div>
           
@@ -440,7 +418,6 @@ export default function App() {
             { id: 'comparison', label: 'Comparison', icon: Activity },
             { id: 'ledger', label: 'Ledger', icon: ClipboardList },
             { id: 'datasets', label: 'Datasets', icon: FileSpreadsheet },
-            { id: 'unittests', label: 'Tests', icon: ShieldCheck },
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -451,7 +428,7 @@ export default function App() {
                   setActiveTab(tab.id as any);
                   if (tab.id !== 'evaluator') setActiveResult(null);
                 }}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 whitespace-nowrap transition-all border shrink-0 ${
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 whitespace-nowrap transition-all border shrink-0 cursor-pointer ${
                   isActive
                     ? 'bg-slate-800 border-slate-700 text-blue-400'
                     : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -469,24 +446,12 @@ export default function App() {
       <div className="flex-1 flex flex-col min-h-screen bg-[#020617] text-slate-200 overflow-x-hidden">
         
         {/* Main Content Header Area (Layout Header from Design) */}
-        <header id="main_content_header" className="px-6 lg:px-8 pt-8 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <header id="main_content_header" className="px-6 lg:px-8 pt-8 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-900/40 mb-2">
           <div>
-            <h1 className="text-2xl lg:text-3xl font-black tracking-tight text-white flex items-center gap-2">
-              Employment Predictor 
-              <span className="text-blue-500 font-mono font-medium text-lg lg:text-xl shrink-0">v2.4</span>
+            <h1 className="text-2xl lg:text-3xl font-black tracking-tight text-white">
+              Employment Predictor
             </h1>
-            <p className="text-slate-400 text-xs mt-1">Local Kaggle-Style Cross-Validation & Metric Engine</p>
-          </div>
-          
-          {/* Metric display indicator */}
-          <div className="flex gap-4 shrink-0 bg-slate-900/40 border border-slate-800 backdrop-blur-md px-5 py-3 rounded-xl">
-            <div>
-              <div className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Session Score</div>
-              <div className="text-xl font-mono font-extrabold text-emerald-400 flex items-baseline gap-1 mt-0.5">
-                {bestModel ? bestModel.averageAuc.toFixed(5) : '0.00000'} 
-                <span className="text-[10px] font-semibold text-slate-400 ml-1">AUC</span>
-              </div>
-            </div>
+            <p className="text-slate-400 text-xs mt-1">Designed and developed by <span className="text-blue-400 font-semibold">MercMinds</span></p>
           </div>
         </header>
 
@@ -615,19 +580,14 @@ export default function App() {
             <DatasetDownloader />
           )}
 
-          {/* TAB 6: MATHEMATICAL TESTS */}
-          {activeTab === 'unittests' && (
-            <UnitTestsRunner />
-          )}
-
         </main>
 
         {/* Aesthetic Footer */}
         <footer id="main_footer" className="border-t border-slate-900 py-6 mt-auto text-center text-[11px] text-slate-500 bg-slate-950/40">
           <div className="max-w-7xl mx-auto px-4 space-y-1.5">
-            <p className="font-bold text-slate-400 uppercase tracking-wider">Employment Prediction Competition Local Evaluation System</p>
+            <p className="font-bold text-slate-400 uppercase tracking-wider">Employment Predictor Local Evaluation System</p>
             <p>
-              Designed to ensure statistical rigor and eliminate data leakage. For academic and training simulation only.
+              Designed and developed by <span className="text-blue-400 font-semibold">MercMinds</span> to ensure statistical rigor and mathematical validation.
             </p>
           </div>
         </footer>
