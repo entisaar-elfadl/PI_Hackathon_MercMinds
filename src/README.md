@@ -1,95 +1,119 @@
-# Employment Prediction — Local Kaggle-Style Testing System
+# 🚀 Employment Prediction — Local Kaggle-Style Testing System
 
-A production-grade local evaluation and testing platform for the Employment Prediction Competition.
+A production-grade, local, browser-based evaluation system for the **Employment Prediction Competition**. This platform simulates the real Kaggle evaluation workflow by validating model predictions against historical survey rounds where true employment outcomes are already known. 
 
-This system allows machine learning engineers and data scientists to evaluate their R/Python prediction models against historical survey rounds (Rounds 6, 7, and 8) where actual employment ground truth outcomes are known.
-
-> **Important Distinction:**
-> **Historical Round Evaluation ≠ Official Kaggle Score**
-> Historical evaluation uses known ground-truth outcomes from survey Rounds 6, 7 & 8 to estimate model generalisation. The real competition's Round 9 test outcomes remain hidden.
+With this tool, you can easily answer: **"Does my R/Python model actually generalise to a future survey round?"**
 
 ---
 
-## Competition Context
-
-* **Target Variable**: `employed_status` (0 = unemployed, 1 = employed)
-* **Model Output**: Predicted probability between `0.0` and `1.0` (not a hard 0/1 classification)
-* **Evaluation Metric**: **ROC AUC** (Area Under Receiver Operating Characteristic Curve)
-
----
-
-## Historical Validation Strategy
-
-To simulate the hidden Round 9 competition evaluation without data leakage, the testing system supports three primary historical survey validation rounds:
-
-| Evaluation Round | Training Dataset | Evaluation Dataset | Simulates |
-|---|---|---|---|
-| **Round 6** | Rounds 1–5 (`rounds_1_5.csv`) | Round 6 (`round_6.csv`) | Predicting 1-step future survey round |
-| **Round 7** | Rounds 1–6 (`rounds_1_6.csv`) | Round 7 (`round_7.csv`) | Predicting 1-step future survey round |
-| **Round 8** | Rounds 1–7 (`rounds_1_7.csv`) | Round 8 (`round_8.csv`) | Predicting 1-step future survey round |
-
-Evaluating models across all three rounds answers the critical question:
-> **"Does this model consistently generalise to a future survey round?"**
+## 📋 Table of Contents
+- [Competition Context](#-competition-context)
+- [How Historical Validation Works](#-how-historical-validation-works)
+- [Supported Rounds](#-supported-rounds)
+- [Prediction CSV Format](#-prediction-csv-format)
+- [Area Under the Curve (AUC)](#-area-under-the-curve-auc)
+- [How to Use the System](#-how-to-use-the-system)
+- [Installation & Setup](#-installation--setup)
 
 ---
 
-## Supported Prediction CSV Format
+## 🎯 Competition Context
+The objective of this competition is to predict the employment status of survey participants:
+* `0` = unemployed
+* `1` = employed
 
-Prediction files generated from R or Python models must contain two columns:
+Rather than outputting a hard classification, models must output a **probability between 0 and 1** indicating the likelihood of being employed. 
+
+### Key Concept
+A probability of `0.73` should not be evaluated as a binary right/wrong prediction. Instead, the metric evaluates the model's ability to rank employed individuals higher than unemployed individuals.
+
+---
+
+## 🔄 How Historical Validation Works
+To prevent **overfitting** to a single dataset, the platform implements a cross-round validation pipeline. This mimics the real competition's hidden Round 9 evaluation. 
+
+The strategy ensures you do not use future data during model training (preventing **data leakage**):
+
+```
+Rounds 1–5 Training Data 
+      ↓ (Train R/Python Model)
+Predict probabilities for Round 6
+      ↓ (Upload Predictions to Evaluator)
+Calculate ROC AUC against true Round 6 outcomes
+```
+
+---
+
+## 📊 Supported Rounds
+
+### Round 6 Evaluation Pack
+* **Training Data:** `rounds_1_5.csv` (Survey Rounds 1 through 5)
+* **Evaluation Data:** `round_6.csv` (Round 6 outcomes, acting as your local answer key)
+
+### Round 7 Evaluation Pack
+* **Training Data:** `rounds_1_6.csv` (Survey Rounds 1 through 6)
+* **Evaluation Data:** `round_7.csv` (Round 7 outcomes, acting as your local answer key)
+
+### Round 8 Evaluation Pack
+* **Training Data:** `rounds_1_7.csv` (Survey Rounds 1 through 7)
+* **Evaluation Data:** `round_8.csv` (Round 8 outcomes, acting as your local answer key)
+
+---
+
+## 📄 Prediction CSV Format
+The platform accepts standard CSV files with the following headers:
 
 ```csv
 anonymised_id,employed_status
-ID_10,0.3147682
-ID_100,0.5278193
-ID_1000,0.8212341
+ID_10,0.31476
+ID_100,0.52781
+ID_1000,0.82123
 ```
 
-* `anonymised_id`: Unique participant identifier string matching the evaluation dataset.
-* `employed_status`: Predicted probability of employment between `0.0` and `1.0`.
+* `anonymised_id`: Unique identifier used for ID matching. Rows do not need to be in any specific order.
+* `employed_status`: Represents your model's **predicted probability** (must be numeric, between 0.0 and 1.0, and cannot contain `NA`, `NaN`, or infinite values).
 
 ---
 
-## Key Features
+## 📈 Area Under the Curve (AUC)
+The primary evaluation metric is **ROC AUC (Area Under the Receiver Operating Characteristic Curve)**.
+* **1.00** = Perfect separation of classes.
+* **0.90** = Excellent generalisation.
+* **0.70** = Moderate/Good performance.
+* **0.50** = Equivalent to random guessing.
 
-1. **Strict CSV Validation & Probability Checks**: Detects missing columns, non-numeric values (`NA`, `NaN`, `Inf`), out-of-bounds values (`<0` or `>1`), duplicate IDs, and unmatched IDs.
-2. **Wilcoxon Rank-Sum ROC AUC Calculator**: Computes exact ROC AUC scores handling probability ties cleanly. Displays score as both AUC decimal (e.g., `0.55366`) and percentage (e.g., `55.37%`).
-3. **Interactive Visualizations**:
-   - Area-shaded ROC Curve (TPR vs FPR) with diagonal random-guess baseline.
-   - Predicted Probability Distribution Histogram (overlaid density for actual `0`s vs actual `1`s).
-   - Dynamic Threshold Classifier (slide cutoff from `0.00` to `1.00` to inspect 2x2 Confusion Matrix, Precision, Recall, Accuracy, Specificity, F1 Score).
-4. **Multi-Round Comparison Matrix**: Compares models side-by-side across Round 6, Round 7, and Round 8. Computes Average AUC, Min/Max, and Standard Deviation to flag high-variance overfitted models.
-5. **R Code Generator**: Generates clean, leakage-free R scripts (`glm`, `randomForest`, `xgboost`, `glmnet`) that perform median imputation strictly on training data and export properly formatted submission CSVs.
-6. **Local Leaderboard & Privacy**: Operates entirely in the browser using IndexedDB / LocalStorage. Zero prediction data is sent to external servers.
+The score displayed in the platform is simply `AUC × 100` (e.g., `AUC: 0.75321` corresponds to a **Kaggle score of 75.32%**).
 
 ---
 
-## Installation & Running
+## 🖥️ How to Use the System
 
-### Dependencies
-* Node.js v18+
+1. **Download Data**: Go to the **Survey Datasets** tab, and download your training (e.g., `rounds_1_5.csv`) and answer keys.
+2. **Train your R Model**: Write your model script in R (e.g., Logistic Regression, Random Forest, XGBoost) using the training data.
+3. **Generate Predictions**: Export a prediction CSV for the evaluation round (e.g., Round 6).
+4. **Evaluate**: Go to the **Model Evaluator** tab, select **Round 6**, drag & drop your prediction CSV, and click **Run Historical Evaluation**.
+5. **Analyze Diagnostics**: View your ROC Curve, prediction density separation chart, matched ID metrics, and save the run to your local **Experiment Ledger**.
+6. **Compare**: View the **Model Comparison** tab to analyze model consistency and select your best candidate for Kaggle's final hidden Round 9.
+
+---
+
+## ⚙️ Installation & Setup
+
+### Prerequisites
+* [Node.js](https://nodejs.org/) (v18 or higher)
 * npm
 
-### Setup
-```bash
-# Clone repository
-git clone <repo-url>
-cd employment-prediction-evaluator
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-The application will launch on `http://localhost:3000`.
-
----
-
-## Statistical Principles
-
-### Generalisation Over Single-Round Peaks
-A model with stable performance across rounds (e.g. `0.62`, `0.63`, `0.61` | Std Dev = `0.010`) is significantly more reliable for hidden Round 9 than an overfitted model with single-round spikes (e.g. `0.70`, `0.51`, `0.52` | Std Dev = `0.106`).
-
-### Data Leakage Prevention
-Preprocessing statistics (such as median imputation or scaling factors) must be calculated **strictly from the training dataset** (e.g. `rounds_1_5.csv`) and applied to the evaluation dataset (`round_6.csv`). Calculating preprocessing statistics from future evaluation data constitutes data leakage.
+### Steps
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+3. Open `http://localhost:3000` in your web browser.
+4. Run the production build command:
+   ```bash
+   npm run build
+   ```

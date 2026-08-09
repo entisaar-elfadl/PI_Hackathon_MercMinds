@@ -1,124 +1,83 @@
 /**
- * Core Type Definitions for Employment Prediction Evaluator
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 export type RoundId = 'round_6' | 'round_7' | 'round_8';
 
-export interface GroundTruthRow {
-  anonymised_id: string;
-  employed_status: number; // 0 or 1
-  [key: string]: any;
+export interface RoundConfig {
+  id: RoundId;
+  name: string;
+  trainingDesc: string;
+  evaluationDesc: string;
+  trainingDatasetName: string;
+  evaluationDatasetName: string;
+  sampleSize: number;
 }
 
-export interface PredictionRow {
+export interface Prediction {
   anonymised_id: string;
-  employed_status: number; // probability between 0 and 1
-  rawRowNumber?: number;
+  employed_status: number; // This represents the predicted probability (0 to 1)
 }
 
-export interface MatchedPair {
+export interface GroundTruth {
   anonymised_id: string;
-  actual: number; // 0 or 1
-  predicted: number; // 0.0 to 1.0
-  diff?: number;
+  employed_status: number; // This represents the actual binary class (0 or 1)
+  [key: string]: any;      // Other features can be present
 }
 
 export interface ValidationError {
-  type: 'missing_column' | 'invalid_value' | 'out_of_bounds' | 'duplicate_id' | 'unmatched_id' | 'missing_ground_truth' | 'parse_error';
-  severity: 'error' | 'warning';
+  row?: number;
+  column?: string;
+  value?: string;
   message: string;
-  count?: number;
-  sampleIds?: string[];
-  details?: string;
-}
-
-export interface ValidationSummary {
-  isValid: boolean;
-  totalRowsParsed: number;
-  validPredictionCount: number;
-  invalidPredictionCount: number;
-  errors: ValidationError[];
-  warnings: ValidationError[];
-  hasRequiredColumns: boolean;
-  idMatchStats: {
-    totalGroundTruth: number;
-    matchedCount: number;
-    missingInPredictions: number; // Ground truth IDs not in prediction
-    extraInPredictions: number; // Prediction IDs not in ground truth
-    duplicateInPredictions: number;
-  };
-}
-
-export interface RocPoint {
-  fpr: number; // False Positive Rate (x-axis)
-  tpr: number; // True Positive Rate (y-axis)
-  threshold: number;
-}
-
-export interface ThresholdMetrics {
-  threshold: number;
-  tp: number;
-  fp: number;
-  tn: number;
-  fn: number;
-  accuracy: number;
-  precision: number;
-  recall: number;
-  f1Score: number;
-  specificity: number;
+  severity: 'error' | 'warning';
 }
 
 export interface EvaluationResult {
-  id: string;
+  roundId: RoundId;
   modelName: string;
   modelVersion: string;
-  roundId: RoundId;
-  timestamp: string; // ISO String
-  filename: string;
-  auc: number; // e.g. 0.55366
-  scorePercentage: number; // e.g. 55.37
-  matchedPairsCount: number;
-  totalGroundTruthCount: number;
-  positivesCount: number;
-  negativesCount: number;
-  rocPoints: RocPoint[];
-  matchedPairsSample: MatchedPair[]; // representative sample for table/audit
-  validationSummary: ValidationSummary;
-  notes?: string;
-  trainingSetDescription: string;
-  evalSetDescription: string;
+  auc: number;
+  score: number; // AUC * 100
+  totalObservations: number;
+  validObservations: number;
+  removedObservations: number;
+  missingGroundTruth: number;
+  matchedCount: number;
+  missingPredictionCount: number; // IDs in ground truth but missing in prediction
+  extraPredictionCount: number;   // IDs in prediction but missing in ground truth
+  duplicatePredictionCount: number;
+  predictionFile: string;
+  timestamp: string;
+  notes: string;
+  rocCurve: {
+    fpr: number[];
+    tpr: number[];
+    thresholds: number[];
+  };
 }
 
 export interface Experiment {
   id: string;
   modelName: string;
   modelVersion: string;
-  createdAt: string;
-  notes?: string;
-  resultsByRound: Partial<Record<RoundId, EvaluationResult>>;
-  avgAuc: number;
+  roundId: RoundId;
+  auc: number;
+  score: number;
+  totalObservations: number;
+  validObservations: number;
+  predictionFile: string;
+  timestamp: string;
+  notes: string;
+}
+
+export interface ModelComparison {
+  modelName: string;
+  modelVersion: string;
+  roundScores: Record<RoundId, number | null>; // Score (AUC) per round
+  averageAuc: number;
   minAuc: number;
   maxAuc: number;
-  stdDevAuc: number;
-  roundsEvaluatedCount: number;
-}
-
-export interface RoundInfo {
-  id: RoundId;
-  title: string;
-  trainingSet: string;
-  evaluationSet: string;
-  description: string;
-  sampleObservationCount: number;
-  groundTruthFile: string;
-  trainingDataFile: string;
-}
-
-export interface SampleModel {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  expectedAucByRound: Record<RoundId, number>;
-  predictionsByRound: Record<RoundId, PredictionRow[]>;
+  stdDev: number;
 }

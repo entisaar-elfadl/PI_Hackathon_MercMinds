@@ -1,127 +1,105 @@
-# System Architecture & Technical Specification
+# 🏗️ Application Architecture & Engineering Design
 
-## Overview
-
-The **Employment Prediction Evaluator** is a local, client-side evaluation system for testing statistical and machine learning models on the Employment Prediction Competition datasets.
+This document describes the software architecture, data pipelines, mathematical algorithms, and key design decisions implemented in the **Employment Prediction Local Evaluator**.
 
 ---
 
-## Architecture & Data Flow
+## 🗺️ Architectural Topology (Client-Side)
 
-```text
-[ Prediction CSV File / R Output ]
-               │
-               ▼
-   ┌──────────────────────┐
-   │    PapaParse CSV     │
-   │    Streaming Parser  │
-   └──────────┬───────────┘
-              │
-              ▼
-   ┌──────────────────────┐
-   │ Validation Engine    │
-   │  - Col Check         │
-   │  - NA / NaN / Inf    │
-   │  - Range [0, 1]      │
-   └──────────┬───────────┘
-              │
-              ▼
-   ┌──────────────────────┐
-   │ Map-Based ID Matcher │
-   │  (anonymised_id)     │
-   └──────────┬───────────┘
-              │
-              ▼
-   ┌──────────────────────┐
-   │ Mann-Whitney U Engine│
-   │  - Rank ascending    │
-   │  - Average ties      │
-   │  - ROC Curve Points  │
-   └──────────┬───────────┘
-              │
-              ▼
-   ┌──────────────────────┐
-   │ Local Storage State  │
-   │ & Experiment Matrix  │
-   └──────────────────────┘
+To guarantee 100% data privacy and eliminate server latency or cloud hosting costs, the evaluator operates **entirely in the user's web browser**. Large survey files are parsed and evaluated locally, ensuring that proprietary predictions never leak to third-party APIs or external servers.
+
+```
+┌────────────────────────────────────────────────────────┐
+│                        BROWSER                         │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│  ┌────────────────────────┐    ┌────────────────────┐  │
+│  │    CSV Upload UI       │───&gt;│   CSV Parser       │  │
+│  │   (Drag &amp; Drop / Click)│    │ (Double-quotes, LF)│  │
+│  └────────────────────────┘    └─────────┬──────────┘  │
+│                                          │             │
+│                                          ▼             │
+│  ┌────────────────────────┐    ┌────────────────────┐  │
+│  │   Ground-Truth Loader  │───&gt;│ Validation Engine  │  │
+│  │ (Simulation / Upload)  │    │(Range &amp; bounds check) │
+│  └────────────────────────┘    └─────────┬──────────┘  │
+│                                          │             │
+│                                          ▼             │
+│  ┌────────────────────────┐    ┌────────────────────┐  │
+│  │  ROC Curve &amp; Charts    │&lt;───│     ID Matcher     │  │
+│  │ (Custom SVG Renderer)  │    │(O(N) Map Alignment)│  │
+│  └────────────────────────┘    └─────────┬──────────┘  │
+│                                          │             │
+│                                          ▼             │
+│  ┌────────────────────────┐    ┌────────────────────┐  │
+│  │   Experiment Ledger    │&lt;───│   AUC Calculator   │  │
+│  │    (Local Storage)     │    │ (Ties Integration) │  │
+│  └────────────────────────┘    └────────────────────┘  │
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Core Technical Components
+## ⚙️ Data Flow & Evaluation Pipeline
 
-### 1. ROC AUC Evaluation Engine (`src/utils/aucCalculator.ts`)
-Calculates ROC AUC using the Wilcoxon Mann-Whitney U statistic:
+The evaluation pipeline follows a strict, non-destructive sequence:
 
-$$U = R_1 - \frac{n_1(n_1 + 1)}{2}$$
-
-$$\text{AUC} = \frac{U}{n_1 \times n_0}$$
-
-* Handles tied predictions by assigning average fractional ranks.
-* Time Complexity: $O(N \log N)$ due to probability sorting.
-* Space Complexity: $O(N)$ for pair storage.
-
-### 2. ID Matcher (`src/utils/idMatcher.ts`)
-* Uses a `Map<string, number>` lookup for ground truth IDs.
-* Never assumes prediction rows match ground truth row order.
-* Detects duplicate prediction IDs, missing prediction IDs, and unexpected extra IDs.
-
-### 3. Prediction Validator (`src/utils/validation.ts`)
-* Ensures file contains required headers `anonymised_id` and `employed_status`.
-* Validates that all prediction values are finite numbers between 0 and 1.
-* Generates clear, non-cryptic error and warning logs with affected ID samples.
-
-### 4. Experiment & History Storage (`src/services/experimentStorage.ts`)
-* Maintains local persistence using browser `localStorage` / `IndexedDB`.
-* Groups individual evaluation runs into model experiments linked by `modelName` and `modelVersion`.
-* Calculates summary statistics across rounds:
-  * Average AUC: $\mu = \frac{1}{K} \sum \text{AUC}_k$
-  * Standard Deviation: $\sigma = \sqrt{\frac{1}{K-1} \sum (\text{AUC}_k - \mu)^2}$
-  * Min / Max AUC across historical rounds.
+1. **Select Validation Round**: Users specify which historical round (Round 6, 7, or 8) they are simulating.
+2. **Load Ground Truth**:
+   - *Default:* A deterministic seedable simulation reproduces the exact survey parameters.
+   - *Custom:* A manually uploaded survey answer key is read.
+3. **Parse and Validate Submissions**:
+   - Ensure the presence of `anonymised_id` and `employed_status`.
+   - Validate numerical bounds (probabilities must strictly lie in the interval `[0.0, 1.0]`).
+   - Throw descriptive, line-numbered user errors for invalid inputs.
+4. **Anonymised ID Matching**:
+   - Align prediction records to ground truth.
+   - Report counts of missing predictions and unexpected extra entries.
+5. **Statistical Metrics Calculation**:
+   - Extract aligned probabilities and binary outcomes.
+   - Run ties-aware Trapezoidal ROC integration.
+6. **Render Results**:
+   - Draw coordinates for the ROC Curve and category density plots.
+   - Commit results to the persistent ledger.
 
 ---
 
-## Directory Structure
+## 🔍 Key Engineering Subsystems
 
-```text
-src/
-├── types/
-│   └── index.ts                 # Explicit TypeScript interfaces
-├── utils/
-│   ├── aucCalculator.ts         # Mann-Whitney U AUC & ROC points
-│   ├── validation.ts            # CSV structure & probability checks
-│   ├── idMatcher.ts             # Map-based ID alignment
-│   ├── stats.ts                 # Mean, std dev, formatting
-│   └── rCodeGenerator.ts        # R template generator
-├── data/
-│   ├── historicalDatasets.ts    # Round 6-8 ground truth datasets
-│   └── sampleModels.ts          # Benchmark models for testing
-├── services/
-│   ├── csvParser.ts             # PapaParse wrapper
-│   └── experimentStorage.ts     # LocalStorage state manager
-├── components/
-│   ├── layout/                  # Navbar, DisclaimerBanner
-│   ├── common/                  # MetricCard, StatusBadge
-│   ├── charts/                  # RocCurveChart, ProbabilityDistChart, ModelComparisonChart
-│   ├── evaluation/              # CsvUploader, ValidationReportView, ThresholdAnalyzer, IdAuditTable
-│   ├── rgenerator/              # RCodeModal
-│   └── leaderboard/             # LeaderboardTable
-├── pages/
-│   ├── DashboardPage.tsx
-│   ├── EvaluationPage.tsx
-│   ├── ResultsPage.tsx
-│   ├── ComparisonPage.tsx
-│   ├── LeaderboardPage.tsx
-│   └── DatasetExplorerPage.tsx
-├── tests/
-│   └── evaluationEngine.test.ts # Unit tests for math & logic
-└── App.tsx                      # Root application & router
-```
+### 1. Robust CSV Parser (`src/utils/csv.ts`)
+Standard string splitting on commas fails when cells contain commas or double-quoted fields. Our custom parser implements a state-machine that:
+* Toggles an `inQuotes` flag when encountering `"` characters.
+* Handles escaped double quotes (`""`).
+* Accounts for both Unix (`\n`) and Windows (`\r\n`) line terminators.
+* Trims cellular whitespace natively.
 
----
+### 2. High-Performance ID Alignment (`src/components/EvaluationSuite.tsx`)
+Rather than running nested loops ($O(N^2)$ complexity) to align predictions with ground truths—which would cause browser freezing on large survey datasets—we load prediction IDs into a hash map:
+* **Insertion Complexity:** $O(N)$
+* **Matching Complexity:** $O(M)$ lookup where $M$ is the ground-truth length.
+* This ensures instant alignment, even with files containing tens of thousands of rows.
 
-## Performance & Optimization
+### 3. Ties-Aware ROC AUC Calculator (`src/utils/auc.ts`)
+When models output identical probabilities (ties), standard sorting-based rank evaluations can skew results depending on sort stability. 
 
-* **In-Memory Calculations**: All array transformations and sorting operate in client memory for instant execution (< 50ms for 10,000 rows).
-* **Roc Point Downsampling**: ROC curve coordinates are downsampled to a maximum of 200 points for smooth Recharts rendering without canvas lag.
-* **Responsive Layout**: Designed with Tailwind CSS supporting mobile, tablet, and desktop views with responsive tables and flex containers.
+To resolve this, we calculate the Area Under the Receiver Operating Characteristic (ROC) curve using **trapezoidal integration**:
+1. Sort actual/predicted pairs descending.
+2. Accumulate tied probabilities together inside a single step.
+3. Traverse the curve, adding trapezoidal segments to the area:
+   $$\Delta \text{Area} = (\text{FPR}_i - \text{FPR}_{i-1}) \times \frac{\text{TPR}_i + \text{TPR}_{i-1}}{2}$$
+This guarantees a mathematically perfect AUC matching scikit-learn and R output exactly.
+
+### 4. Custom Lightweight SVG Rendering (`src/components/RocCurve.tsx`)
+Using external Canvas or charting libraries introduces dependency weight and risks React 19 version mismatches. We build our charts as native, fully responsive SVG vector paths:
+* **Scale Translation:** Custom scaling maps mathematical `[0.0, 1.0]` coordinates directly onto pixel dimensions.
+* **Interactive Tooltip:** Real-time Euclidean distance checks find the nearest coordinate to the user's cursor on mousemove, rendering a detailed popup containing thresholds, TPR, and FPR.
+
+### 5. Persistent Ledger (`src/App.tsx`)
+Experiment tracking uses `localStorage` to save model metadata, versioning, run timestamp, notes, and AUC. On initialization, if no history is present, the app seeds historical benchmarks (XGBoost base, Logistic Baseline) to immediately provide a rich comparative view and demonstrate cross-round stability diagnostics.
+
+### 6. Frosted Glass Design System Integration
+To establish a premium, high-tech engineering feel, the application has been designed with a custom **Frosted Glass (Glassmorphism)** dark aesthetic:
+* **Background Atmosphere:** A deep dark base layer (`#020617`) with cool radial neon blue highlights and subtle backdrop blurs (`backdrop-blur-md`).
+* **Visual Hierarchy:** Rather than deep nested card-in-card structures, clean boundaries are defined via high-contrast borders (`border-slate-800/80`) and varying opacity backdrops (`bg-slate-900/40`, `bg-slate-950/60`).
+* **Color Schemes & Legibility:** Strict light-on-dark contrast ratios exceeding WCAG AA standards are enforced across all text, status metrics, and controls. Custom bright color accents (neon blue `#3b82f6` for ROC paths, vibrant emerald `#10b981` for correct classifications, and rose `#f43f5e` for negatives) make mathematical distributions pop with clarity.
+
