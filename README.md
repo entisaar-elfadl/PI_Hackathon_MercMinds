@@ -55,5 +55,3 @@ MercMinds
 This repository is being used to develop the modelling workflow and supporting documentation for the hackathon challenge.
 
 ---
-
-Jean Van Schalkwyk

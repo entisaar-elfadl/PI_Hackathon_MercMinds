@@ -29,6 +29,25 @@ export function EvaluationSuite({
   // Config & State
   const [selectedRound, setSelectedRound] = useState<RoundId>('round_6');
   const [useCustomGroundTruth, setUseCustomGroundTruth] = useState(false);
+  const [evaluationMode, setEvaluationMode] = useState<'practice' | 'real'>('practice');
+
+  const handleModeChange = (mode: 'practice' | 'real') => {
+    setEvaluationMode(mode);
+    if (mode === 'practice') {
+      setUseCustomGroundTruth(false);
+      setSelectedRound('round_6');
+    } else {
+      setUseCustomGroundTruth(true);
+      setSelectedRound('custom');
+    }
+    // Clear any previously uploaded files and warnings when switching environments
+    setPredictionFile(null);
+    setPredictionFileName('');
+    setGroundTruthFile(null);
+    setGroundTruthFileName('');
+    setErrors([]);
+    setWarnings([]);
+  };
 
   // File Upload states
   const [predictionFile, setPredictionFile] = useState<File | null>(null);
@@ -276,77 +295,90 @@ export function EvaluationSuite({
                 <h2 className="text-sm font-extrabold text-white uppercase tracking-wider">Evaluation Config</h2>
               </div>
  
-              {/* Select Evaluation Round */}
+              {/* Select Evaluation Mode / Environment */}
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
-                  Historical Validation Round
-                  <HelpCircle className="w-3.5 h-3.5 text-slate-600 cursor-help" title="Which survey round are you testing against?" />
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['round_6', 'round_7', 'round_8'] as RoundId[]).map(rId => (
-                    <button
-                      key={rId}
-                      type="button"
-                      onClick={() => setSelectedRound(rId)}
-                      className={`py-2 px-3 text-xs font-bold rounded-xl border text-center transition-all ${
-                        selectedRound === rId
-                          ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-900/40'
-                          : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:bg-slate-900/30 hover:text-slate-200'
-                      }`}
-                    >
-                      {rId.replace('_', ' ').toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed font-semibold">
-                  {selectedRound === 'round_6'
-                    ? 'Validating with simulated rounds 1–5 to predict round 6.'
-                    : selectedRound === 'round_7'
-                    ? 'Validating with simulated rounds 1–6 to predict round 7.'
-                    : 'Validating with simulated rounds 1–7 to predict round 8.'}
-                </p>
-              </div>
- 
-              {/* Select Ground Truth Source */}
-              <div className="space-y-2.5 pt-4 border-t border-slate-800/80">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                  Ground Truth Dataset Source
+                  Evaluation Target
                 </label>
-                <div className="flex flex-col gap-2">
-                  <label className="flex items-start gap-3 p-3 bg-slate-950/40 rounded-xl border border-slate-800/80 hover:bg-slate-900/20 cursor-pointer transition-colors">
-                    <input
-                      type="radio"
-                      checked={!useCustomGroundTruth}
-                      onChange={() => setUseCustomGroundTruth(false)}
-                      className="mt-0.5 text-blue-500 focus:ring-blue-500 cursor-pointer accent-blue-600 bg-slate-950 border-slate-800"
-                    />
-                    <div>
-                      <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
-                        Built-in Simulated Ground Truth
-                        <Sparkles className="w-3.5 h-3.5 text-blue-400 fill-blue-500/20" />
-                      </div>
-                      <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
-                        Matches generated training packs. No download required.
-                      </div>
-                    </div>
-                  </label>
- 
-                  <label className="flex items-start gap-3 p-3 bg-slate-950/40 rounded-xl border border-slate-800/80 hover:bg-slate-900/20 cursor-pointer transition-colors">
-                    <input
-                      type="radio"
-                      checked={useCustomGroundTruth}
-                      onChange={() => setUseCustomGroundTruth(true)}
-                      className="mt-0.5 text-blue-500 focus:ring-blue-500 cursor-pointer accent-blue-600 bg-slate-950 border-slate-800"
-                    />
-                    <div>
-                      <div className="text-xs font-extrabold text-white">Custom Ground Truth CSV Upload</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
-                        Upload your own validation survey with true targets.
-                      </div>
-                    </div>
-                  </label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('practice')}
+                    className={`py-1.5 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                      evaluationMode === 'practice'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                    }`}
+                  >
+                    🎓 Practice Sandbox
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('real')}
+                    className={`py-1.5 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                      evaluationMode === 'real'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                    }`}
+                  >
+                    🔥 Real Evaluation
+                  </button>
                 </div>
               </div>
+
+              {/* Conditional options depending on Practice or Real mode */}
+              {evaluationMode === 'practice' ? (
+                <div className="space-y-3 animate-in fade-in duration-200">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                      Practice Round Selection
+                      <HelpCircle className="w-3.5 h-3.5 text-slate-600 cursor-help" title="Select simulated round to evaluate against" />
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(['round_6', 'round_7', 'round_8'] as RoundId[]).map(rId => (
+                        <button
+                          key={rId}
+                          type="button"
+                          onClick={() => setSelectedRound(rId)}
+                          className={`py-2 text-[10px] font-bold rounded-lg border text-center transition-all cursor-pointer ${
+                            selectedRound === rId
+                              ? 'bg-indigo-600 border-indigo-500 text-white shadow-md'
+                              : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:bg-slate-900/30 hover:text-slate-200'
+                          }`}
+                        >
+                          ROUND {rId.replace('round_', '')}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-indigo-400 leading-relaxed font-semibold">
+                      {selectedRound === 'round_6'
+                        ? 'Uses simulated Round 6 outcomes (1,200 rows).'
+                        : selectedRound === 'round_7'
+                        ? 'Uses simulated Round 7 outcomes (1,300 rows).'
+                        : 'Uses simulated Round 8 outcomes (1,400 rows).'}
+                    </p>
+                  </div>
+                  
+                  <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-[10px] text-slate-400 font-medium leading-relaxed">
+                    ✨ **Sandbox Mode active:** Evaluates predictions against deterministic built-in simulated ground-truth files. Excellent for practice!
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 animate-in fade-in duration-200 p-3.5 bg-blue-500/5 border border-blue-500/10 rounded-xl">
+                  <div className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                    <span>📝 Original / Real Dataset</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                    Upload your own real-world ground truth survey outcomes alongside your predictions below.
+                  </p>
+                  <div className="text-[9px] text-slate-500 font-bold border-t border-slate-800/60 pt-2 mt-1">
+                    📁 FILE SYSTEM PLACEHOLDERS:
+                    <div className="mt-1 text-[10px] font-mono text-blue-300 select-all bg-slate-950/80 p-1.5 rounded border border-slate-800 text-center">
+                      /original_rounds/
+                    </div>
+                  </div>
+                </div>
+              )}
  
               {/* Model Description Input */}
               <div className="space-y-3 pt-4 border-t border-slate-800/80">

@@ -24,7 +24,7 @@ export function DatasetDownloader() {
     document.body.removeChild(link);
   };
 
-  const handleDownloadDataset = async (roundId: RoundId, type: 'training' | 'evaluation') => {
+  const handleDownloadDataset = async (roundId: 'round_6' | 'round_7' | 'round_8', type: 'training' | 'evaluation') => {
     const taskKey = `${roundId}-${type}`;
     setDownloading(taskKey);
 
@@ -48,7 +48,7 @@ export function DatasetDownloader() {
     }, 100);
   };
 
-  const handleDownloadSample = (modelType: 'perfect' | 'random' | 'weak_logistic' | 'strong_boosting', roundId: RoundId) => {
+  const handleDownloadSample = (modelType: 'perfect' | 'random' | 'weak_logistic' | 'strong_boosting', roundId: 'round_6' | 'round_7' | 'round_8') => {
     const taskKey = `sample-${modelType}-${roundId}`;
     setDownloading(taskKey);
 
@@ -67,18 +67,24 @@ export function DatasetDownloader() {
     }, 100);
   };
 
+  const handleDownloadPlaceholder = (type: 'predictions' | 'ground_truth') => {
+    const filename = `placeholder_${type}.csv`;
+    const content = type === 'predictions'
+      ? `anonymised_id,employed_status\np_0001,0.85\np_0002,0.12\np_0003,0.64\np_0004,0.31\np_0005,0.91\np_0006,0.05\np_0007,0.73\np_0008,0.48\np_0009,0.55\np_0010,0.95\n`
+      : `anonymised_id,employed_status\np_0001,1\np_0002,0\np_0003,1\np_0004,0\np_0005,1\np_0006,0\np_0007,1\np_0008,0\np_0009,1\np_0010,1\n`;
+    triggerDownload(filename, content);
+  };
+
   return (
     <div id="dataset_downloader_card" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Datasets Download Section */}
       <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
         <div className="flex items-center gap-2 mb-4">
           <FileSpreadsheet className="w-5 h-5 text-indigo-500" />
-          <h2 className="text-base font-bold text-slate-800 font-display">Competition Datasets Generator</h2>
+          <h2 className="text-base font-bold text-slate-800 font-display">🎓 Practice Sandbox Dataset Generator</h2>
         </div>
         <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-          Generate and download the actual historical survey datasets to train your R/Python machine learning models. 
-          To prevent <strong>data leakage</strong>, ensure your models are trained <i>only</i> on the training datasets 
-          prior to being evaluated on corresponding survey rounds.
+          These are deterministic simulated survey rounds generated in TypeScript. Use this **Practice Set** to design, debug, and dry-run your R/Python machine learning model evaluation pipelines before loading your original real round information.
         </p>
 
         <div className="space-y-4">
@@ -86,37 +92,37 @@ export function DatasetDownloader() {
           <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span className="inline-block px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full mb-1">
-                SIMULATION ROUND 6
+                PRACTICE SANDBOX ROUND 6
               </span>
-              <h3 className="text-sm font-bold text-slate-800">Round 6 Evaluation Pack</h3>
+              <h3 className="text-sm font-bold text-slate-800">Practice Round 6 Evaluation Pack</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Train on survey rounds 1–5 (3,800 rows). Evaluate against round 6 outcomes (1,200 rows).
+                Train on simulated rounds 1–5 (3,800 rows). Evaluate against simulated round 6 outcomes (1,200 rows).
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handleDownloadDataset('round_6', 'training')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_6-training' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                rounds_1_5.csv (Train)
+                rounds_1_5_practice.csv
               </button>
               <button
                 onClick={() => handleDownloadDataset('round_6', 'evaluation')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_6-evaluation' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                round_6.csv (Answers)
+                round_6_practice_answers.csv
               </button>
             </div>
           </div>
@@ -125,37 +131,37 @@ export function DatasetDownloader() {
           <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span className="inline-block px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full mb-1">
-                SIMULATION ROUND 7
+                PRACTICE SANDBOX ROUND 7
               </span>
-              <h3 className="text-sm font-bold text-slate-800">Round 7 Evaluation Pack</h3>
+              <h3 className="text-sm font-bold text-slate-800">Practice Round 7 Evaluation Pack</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Train on survey rounds 1–6 (4,600 rows). Evaluate against round 7 outcomes (1,300 rows).
+                Train on simulated rounds 1–6 (4,600 rows). Evaluate against simulated round 7 outcomes (1,300 rows).
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handleDownloadDataset('round_7', 'training')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_7-training' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                rounds_1_6.csv (Train)
+                rounds_1_6_practice.csv
               </button>
               <button
                 onClick={() => handleDownloadDataset('round_7', 'evaluation')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_7-evaluation' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                round_7.csv (Answers)
+                round_7_practice_answers.csv
               </button>
             </div>
           </div>
@@ -164,30 +170,30 @@ export function DatasetDownloader() {
           <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <span className="inline-block px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full mb-1">
-                SIMULATION ROUND 8
+                PRACTICE SANDBOX ROUND 8
               </span>
-              <h3 className="text-sm font-bold text-slate-800">Round 8 Evaluation Pack</h3>
+              <h3 className="text-sm font-bold text-slate-800">Practice Round 8 Evaluation Pack</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Train on survey rounds 1–7 (5,400 rows). Evaluate against round 8 outcomes (1,400 rows).
+                Train on simulated rounds 1–7 (5,400 rows). Evaluate against simulated round 8 outcomes (1,400 rows).
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handleDownloadDataset('round_8', 'training')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_8-training' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                rounds_1_7.csv (Train)
+                rounds_1_7_practice.csv
               </button>
               <button
                 onClick={() => handleDownloadDataset('round_8', 'evaluation')}
                 disabled={downloading !== null}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white rounded-lg active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {downloading === 'round_8-evaluation' ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -213,42 +219,74 @@ export function DatasetDownloader() {
             different mathematical tiers to test the platform's diagnostic charts, ID-matching, and leaderboard:
           </p>
 
-          <div className="space-y-2">
+          <div className="space-y-4">
             <div>
               <label className="text-[10px] font-bold text-slate-500 uppercase">Pre-made Submissions for Round 6</label>
               <div className="grid grid-cols-2 gap-2 mt-1.5">
                 <button
                   onClick={() => handleDownloadSample('perfect', 'round_6')}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-emerald-400 transition-colors text-left truncate flex items-center gap-1"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-emerald-400 transition-colors text-left truncate flex items-center gap-1 cursor-pointer"
                 >
                   🥇 Perfect (AUC 1.0)
                 </button>
                 <button
                   onClick={() => handleDownloadSample('strong_boosting', 'round_6')}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-teal-400 transition-colors text-left truncate flex items-center gap-1"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-teal-400 transition-colors text-left truncate flex items-center gap-1 cursor-pointer"
                 >
                   🚀 Strong (AUC ~0.76)
                 </button>
                 <button
                   onClick={() => handleDownloadSample('weak_logistic', 'round_6')}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-amber-400 transition-colors text-left truncate flex items-center gap-1"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-amber-400 transition-colors text-left truncate flex items-center gap-1 cursor-pointer"
                 >
                   📉 Weak (AUC ~0.61)
                 </button>
                 <button
                   onClick={() => handleDownloadSample('random', 'round_6')}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-rose-400 transition-colors text-left truncate flex items-center gap-1"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[11px] font-semibold text-rose-400 transition-colors text-left truncate flex items-center gap-1 cursor-pointer"
                 >
                   🎲 Random (AUC 0.5)
                 </button>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-800">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">CSV File Placeholders</label>
+              <p className="text-[10px] text-slate-400 mt-1 mb-2">
+                Starter templates with proper column headers to place your model outputs properly.
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => handleDownloadPlaceholder('predictions')}
+                  className="px-3 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 rounded-lg text-xs font-semibold text-indigo-400 transition-colors text-left flex items-center justify-between cursor-pointer"
+                >
+                  <span>📄 placeholder_predictions.csv</span>
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleDownloadPlaceholder('ground_truth')}
+                  className="px-3 py-2 bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/20 rounded-lg text-xs font-semibold text-emerald-400 transition-colors text-left flex items-center justify-between cursor-pointer"
+                >
+                  <span>📄 placeholder_ground_truth.csv</span>
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-800">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">📁 Real Round Info Placeholder</label>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                You can organize or back up your real-world rounds inside this project repository by placing them in the:
+              </p>
+              <div className="mt-1.5 p-2 bg-slate-950/60 border border-slate-800 text-[10px] font-mono text-indigo-300 rounded select-all break-all text-center">
+                /original_rounds/
               </div>
             </div>
           </div>
         </div>
 
         <div className="mt-6 pt-4 border-t border-slate-800 text-[10px] text-slate-400 leading-relaxed">
-          <strong>Tip:</strong> Download the <code className="text-slate-300 font-mono">prediction_strong_boosting_round_6.csv</code> and 
-          upload it in the <strong>Model Evaluator</strong> tab to see a fully populated diagnostics report.
+          <strong>Tip:</strong> Toggle the **Real Evaluation** mode in the **Model Evaluator** tab to evaluate with your own custom datasets!
         </div>
       </div>
     </div>
