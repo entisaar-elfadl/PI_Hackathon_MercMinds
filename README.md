@@ -18,7 +18,7 @@ This is a real-world machine learning problem involving:
 - Evaluation by AUC rather than simple accuracy
 
 ## Objective
-Build a predictive model that assigns a probability of employment for each participant in the Round 9 cohort. The target is to maximise ranking quality on the hidden test set, measured by AUC.
+Build a predictive model that assigns a probability of employment for each participant in the Round 9 cohort. The target is to maximise the ranking quality on the hidden test set, measured by AUC.
 
 ## Project Focus
 This repository provides the base structure for:
