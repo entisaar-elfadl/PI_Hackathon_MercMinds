@@ -1,21 +1,23 @@
 # ============================================================
-# EXPERIMENT 30 — UPGRADED LOGISTIC REGRESSION
+# EXPERIMENT 31 — EXTRA TREES
+# ALL FEATURES
 # ============================================================
 
 import pandas as pd
+import numpy as np
 
 from pathlib import Path
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import ExtraTreesClassifier
 
 
 print("============================================")
-print("EXPERIMENT 30")
-print("UPGRADED LOGISTIC REGRESSION")
+print("EXPERIMENT 31")
+print("EXTRA TREES — ALL FEATURES")
 print("============================================")
 
 
@@ -30,9 +32,6 @@ DATA_DIR = (
     "../../assets/dataset"
 ).resolve()
 
-
-print("\nCurrent directory:")
-print(CURRENT_DIR)
 
 print("\nDataset directory:")
 print(DATA_DIR)
@@ -51,20 +50,14 @@ if not train_file.exists():
         f"Training file not found:\n{train_file}"
     )
 
-
 if not test_file.exists():
     raise FileNotFoundError(
         f"Test file not found:\n{test_file}"
     )
 
 
-train_data = pd.read_csv(
-    train_file
-)
-
-test_data = pd.read_csv(
-    test_file
-)
+train_data = pd.read_csv(train_file)
+test_data = pd.read_csv(test_file)
 
 
 print("\n============================================")
@@ -94,35 +87,6 @@ print(
 
 target = "employed_status"
 
-
-if target not in train_data.columns:
-    raise ValueError(
-        f"Target column '{target}' not found."
-    )
-
-
-if target in test_data.columns:
-    raise ValueError(
-        f"Target column '{target}' unexpectedly exists in test data."
-    )
-
-
-print("\nTarget:", target)
-
-
-# ============================================================
-# 4. CHECK ORIGINAL TARGET
-# ============================================================
-
-print("\nOriginal target values:")
-
-print(
-    train_data[target].value_counts(
-        dropna=False
-    )
-)
-
-
 print(
     "\nMissing target values:",
     train_data[target].isna().sum()
@@ -130,133 +94,145 @@ print(
 
 
 # ============================================================
-# 5. CLEAN TARGET
+# 4. REMOVE MISSING TARGETS
 # ============================================================
-
-# Remove rows where the target is missing.
-# We cannot train a supervised model without a label.
 
 train_clean = train_data.dropna(
     subset=[target]
 ).copy()
 
 
-# Convert target to numeric.
+# Make target explicitly 0/1
 
 train_clean[target] = pd.to_numeric(
     train_clean[target],
     errors="coerce"
 )
 
-
-# Remove anything that became NaN after conversion.
-
 train_clean = train_clean.dropna(
     subset=[target]
-).copy()
+)
+
+train_clean[target] = train_clean[
+    target
+].astype(int)
 
 
-# Convert target to integer 0/1.
-
-y = train_clean[target].astype(int)
+y = train_clean[target]
 
 
-# ============================================================
-# 6. VALIDATE TARGET
-# ============================================================
-
-unique_targets = sorted(
-    y.unique()
+print(
+    "Training rows after cleaning:",
+    len(train_clean)
 )
 
 
-print("\nClean target values:")
+print(
+    "\nTarget distribution:"
+)
+
 print(
     y.value_counts()
 )
 
 
-print(
-    "\nUnique target values:",
-    unique_targets
-)
+# ============================================================
+# 5. REMOVE TARGET FROM FEATURES
+# ============================================================
+
+X = train_clean.drop(
+    columns=[target]
+).copy()
 
 
-if not set(unique_targets).issubset({0, 1}):
-    raise ValueError(
-        "Target contains values other than 0 and 1."
+X_test = test_data.copy()
+
+
+# ============================================================
+# 6. REMOVE ID FROM FEATURES
+# ============================================================
+
+# anonymised_id is an identifier, not a meaningful predictor.
+
+id_column = "anonymised_id"
+
+if id_column in X.columns:
+
+    X = X.drop(
+        columns=[id_column]
+    )
+
+if id_column in X_test.columns:
+
+    X_test = X_test.drop(
+        columns=[id_column]
     )
 
 
+# ============================================================
+# 7. IDENTIFY COLUMN TYPES
+# ============================================================
+
+categorical_features = X.select_dtypes(
+    include=[
+        "object",
+        "category",
+        "bool"
+    ]
+).columns.tolist()
+
+
+numerical_features = X.select_dtypes(
+    include=[
+        np.number
+    ]
+).columns.tolist()
+
+
+print("\n============================================")
+print("FEATURE INFORMATION")
+print("============================================")
+
 print(
-    "\nTraining rows after target cleaning:",
-    len(train_clean)
+    "\nTotal features:",
+    len(X.columns)
+)
+
+print(
+    "Categorical features:",
+    len(categorical_features)
+)
+
+print(
+    "Numerical features:",
+    len(numerical_features)
 )
 
 
-# ============================================================
-# 7. FEATURES
-# ============================================================
+print("\nCategorical:")
 
-up_cat = [
-    "gender",
-    "education_level"
-]
+for column in categorical_features:
+    print(" -", column)
 
 
-up_num = [
-    "work_readiness_score"
-]
+print("\nNumerical:")
 
-
-features = up_cat + up_num
-
-
-# Make sure all required columns exist.
-
-for column in features:
-
-    if column not in train_clean.columns:
-        raise ValueError(
-            f"Missing training feature: {column}"
-        )
-
-    if column not in test_data.columns:
-        raise ValueError(
-            f"Missing test feature: {column}"
-        )
+for column in numerical_features:
+    print(" -", column)
 
 
 # ============================================================
-# 8. CREATE X
+# 8. CATEGORICAL PIPELINE
 # ============================================================
 
-X_train = train_clean[
-    features
-].copy()
-
-
-X_test = test_data[
-    features
-].copy()
-
-
-print("\nFeatures:")
-for feature in features:
-    print(" -", feature)
-
-
-# ============================================================
-# 9. CATEGORICAL PREPROCESSING
-# ============================================================
-
-cat_pipe = Pipeline([
+categorical_pipeline = Pipeline([
     (
         "imputer",
         SimpleImputer(
             strategy="most_frequent"
         )
     ),
+
     (
         "onehot",
         OneHotEncoder(
@@ -267,56 +243,81 @@ cat_pipe = Pipeline([
 
 
 # ============================================================
-# 10. NUMERICAL PREPROCESSING
+# 9. NUMERICAL PIPELINE
 # ============================================================
 
-num_pipe = Pipeline([
+numerical_pipeline = Pipeline([
     (
         "imputer",
         SimpleImputer(
             strategy="median"
         )
-    ),
-    (
-        "scaler",
-        StandardScaler()
     )
 ])
 
 
 # ============================================================
-# 11. COMBINE PREPROCESSING
+# 10. PREPROCESSOR
 # ============================================================
 
 preprocessor = ColumnTransformer([
+
     (
-        "cat",
-        cat_pipe,
-        up_cat
+        "categorical",
+        categorical_pipeline,
+        categorical_features
     ),
+
     (
-        "num",
-        num_pipe,
-        up_num
+        "numerical",
+        numerical_pipeline,
+        numerical_features
     )
+
 ])
 
 
 # ============================================================
-# 12. LOGISTIC REGRESSION MODEL
+# 11. EXTRA TREES
 # ============================================================
 
-upgraded = Pipeline([
+model = ExtraTreesClassifier(
+
+    n_estimators=800,
+
+    max_depth=None,
+
+    min_samples_split=4,
+
+    min_samples_leaf=2,
+
+    max_features="sqrt",
+
+    class_weight="balanced",
+
+    random_state=42,
+
+    n_jobs=-1
+
+)
+
+
+# ============================================================
+# 12. COMPLETE PIPELINE
+# ============================================================
+
+extra_trees = Pipeline([
+
     (
-        "pre",
+        "preprocessor",
         preprocessor
     ),
+
     (
-        "clf",
-        LogisticRegression(
-            max_iter=1000
-        )
+        "model",
+        model
     )
+
 ])
 
 
@@ -325,59 +326,65 @@ upgraded = Pipeline([
 # ============================================================
 
 print("\n============================================")
-print("TRAINING")
+print("TRAINING EXTRA TREES")
 print("============================================")
 
 print(
     "Training on",
-    len(X_train),
+    len(X),
     "rows..."
 )
 
 
-upgraded.fit(
-    X_train,
+extra_trees.fit(
+    X,
     y
 )
 
 
-print("Training complete.")
+print(
+    "Training complete."
+)
 
 
 # ============================================================
-# 14. PREDICT PROBABILITIES
+# 14. PREDICT
 # ============================================================
 
 print("\nGenerating test predictions...")
 
 
-up_prob = upgraded.predict_proba(
+probabilities = extra_trees.predict_proba(
     X_test
 )[:, 1]
 
 
 # ============================================================
-# 15. VALIDATE PREDICTIONS
+# 15. VALIDATE
 # ============================================================
 
-if len(up_prob) != len(test_data):
+if len(probabilities) != len(test_data):
 
     raise ValueError(
         "Prediction count does not match test rows."
     )
 
 
-if pd.isna(up_prob).any():
+if np.isnan(probabilities).any():
 
     raise ValueError(
         "Predictions contain NaN values."
     )
 
 
-if ((up_prob < 0) | (up_prob > 1)).any():
+if (
+    (probabilities < 0).any()
+    or
+    (probabilities > 1).any()
+):
 
     raise ValueError(
-        "Predictions are outside [0, 1]."
+        "Predictions outside [0, 1]."
     )
 
 
@@ -385,13 +392,13 @@ if ((up_prob < 0) | (up_prob > 1)).any():
 # 16. CREATE SUBMISSION
 # ============================================================
 
-submission2 = pd.DataFrame({
+submission = pd.DataFrame({
 
     "anonymised_id":
         test_data["anonymised_id"],
 
     "employed_status":
-        up_prob
+        probabilities
 
 })
 
@@ -400,14 +407,14 @@ submission2 = pd.DataFrame({
 # 17. VALIDATE SUBMISSION
 # ============================================================
 
-if len(submission2) != len(test_data):
+if len(submission) != len(test_data):
 
     raise ValueError(
-        "Submission row count does not match test data."
+        "Submission row count mismatch."
     )
 
 
-if submission2[
+if submission[
     "employed_status"
 ].isna().any():
 
@@ -416,14 +423,14 @@ if submission2[
     )
 
 
-if not submission2[
+if not submission[
     "anonymised_id"
 ].equals(
     test_data["anonymised_id"]
 ):
 
     raise ValueError(
-        "anonymised_id ordering does not match test data."
+        "ID ordering does not match test data."
     )
 
 
@@ -432,22 +439,22 @@ if not submission2[
 # ============================================================
 
 output_file = (
-    "submission_exp30_upgraded_logistic.csv"
+    "submission_exp31_extra_trees.csv"
 )
 
 
-submission2.to_csv(
+submission.to_csv(
     output_file,
     index=False
 )
 
 
 # ============================================================
-# 19. OUTPUT SUMMARY
+# 19. SUMMARY
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 30 COMPLETE")
+print("EXPERIMENT 31 COMPLETE")
 print("============================================")
 
 print(
@@ -457,19 +464,19 @@ print(
 
 print(
     "Rows:",
-    len(submission2)
+    len(submission)
 )
 
 print(
     "Columns:",
-    len(submission2.columns)
+    len(submission.columns)
 )
 
 
 print("\nPrediction summary:")
 
 print(
-    submission2[
+    submission[
         "employed_status"
     ].describe()
 )
@@ -478,16 +485,28 @@ print(
 print("\nFirst 10 predictions:")
 
 print(
-    submission2.head(10)
+    submission.head(10)
 )
 
 
-print("\nTarget distribution used for training:")
+# ============================================================
+# 20. BENCHMARKS
+# ============================================================
+
+print("\n============================================")
+print("BENCHMARKS")
+print("============================================")
 
 print(
-    y.value_counts(
-        normalize=True
-    )
+    "Current best ensemble : 0.64516"
+)
+
+print(
+    "Exp 30 Logistic       : 0.59229"
+)
+
+print(
+    "Exp 31 ExtraTrees     : PENDING"
 )
 
 
