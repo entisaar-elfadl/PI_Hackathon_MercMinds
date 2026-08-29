@@ -1,5 +1,6 @@
 # ============================================================
-# EXPERIMENT 34 — ONE-VS-REST (OvR) BAGGED PERCEPTRON ENSEMBLE
+# EXPERIMENT 35 — HYBRID ENSEMBLE: PERCEPTRON (MLP) + LOGISTIC REGRESSION
+# SOFT-VOTING PROBABILITY BLEND
 # ============================================================
 
 import pandas as pd
@@ -11,13 +12,13 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.neural_network import MLPClassifier
-from sklearn.multiclass import OneVsRestClassifier
-from sklearn.ensemble import BaggingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import VotingClassifier
 
 
 print("============================================")
-print("EXPERIMENT 34")
-print("ONE-VS-REST (OvR) BAGGED PERCEPTRON")
+print("EXPERIMENT 35")
+print("HYBRID: PERCEPTRON (MLP) + LOGISTIC REGRESSION")
 print("============================================")
 
 
@@ -180,41 +181,46 @@ preprocessor = ColumnTransformer(
 
 
 # ============================================================
-# 9. ONE-VS-REST & BAGGED PERCEPTRON ARCHITECTURE
+# 9. HYBRID MODELS SETUP
 # ============================================================
 
-# Base multi-layer perceptron
-base_mlp = MLPClassifier(
-    hidden_layer_sizes=(128, 64),
+# Model A: Multi-Layer Perceptron (The high-performing model from Exp 33)
+mlp_model = MLPClassifier(
+    hidden_layer_sizes=(64, 32),
     activation="relu",
     solver="adam",
-    alpha=0.005,
+    alpha=0.01,
     batch_size=128,
     learning_rate_init=0.001,
     max_iter=300,
     early_stopping=True,
-    n_iter_no_change=15,
+    n_iter_no_change=20,
     validation_fraction=0.15,
     random_state=42
 )
 
-# Explicit One-vs-Rest wrapper
-ovr_mlp = OneVsRestClassifier(base_mlp)
+# Model B: L2-Regularized Logistic Regression (Linear baseline stabilizer)
+logistic_model = LogisticRegression(
+    C=0.1,
+    penalty="l2",
+    solver="lbfgs",
+    max_iter=1000,
+    random_state=42
+)
 
-# Bagging meta-estimator across 7 diverse bootstrap iterations
-bagged_ovr_model = BaggingClassifier(
-    estimator=ovr_mlp,
-    n_estimators=7,
-    max_samples=0.85,
-    max_features=0.90,
-    bootstrap=True,
-    random_state=42,
-    n_jobs=-1
+# Soft Voting Ensemble (75% weight on MLP, 25% weight on Logistic Regression)
+hybrid_ensemble = VotingClassifier(
+    estimators=[
+        ("perceptron_mlp", mlp_model),
+        ("logistic_regression", logistic_model)
+    ],
+    voting="soft",
+    weights=[3, 1]
 )
 
 pipeline = Pipeline(steps=[
     ("preprocessor", preprocessor),
-    ("model", bagged_ovr_model)
+    ("ensemble", hybrid_ensemble)
 ])
 
 
@@ -223,7 +229,7 @@ pipeline = Pipeline(steps=[
 # ============================================================
 
 print("\n============================================")
-print("TRAINING ONE-VS-REST BAGGED PERCEPTRON")
+print("TRAINING HYBRID PERCEPTRON + REGRESSION")
 print("============================================")
 print(f"Training ensemble on {len(X)} rows...")
 
@@ -269,7 +275,7 @@ submission = pd.DataFrame({
 # 14. SAVE
 # ============================================================
 
-output_file = "submission_exp34_ovr_perceptron.csv"
+output_file = "submission_exp35_perceptron_regression_blend.csv"
 
 submission.to_csv(output_file, index=False)
 
@@ -279,7 +285,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 34 COMPLETE")
+print("EXPERIMENT 35 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -293,11 +299,12 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Current best ensemble   : 0.64516")
-print("Exp 30 Logistic         : 0.59229")
-print("Exp 31 ExtraTrees       : 0.61732")
-print("Exp 33 Perceptron / MLP : 0.64453")
-print("Exp 34 OvR Bagged MLP   : PENDING")
+print("Current best ensemble     : 0.64516")
+print("Exp 30 Logistic           : 0.59229")
+print("Exp 31 ExtraTrees         : 0.61732")
+print("Exp 33 Perceptron / MLP   : 0.64453")
+print("Exp 34 OvR Bagged MLP     : 0.58784")
+print("Exp 35 Perceptron + LogReg: PENDING")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
