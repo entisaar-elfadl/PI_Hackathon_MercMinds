@@ -1,6 +1,5 @@
 # ============================================================
-# EXPERIMENT 33 — PERCEPTRON / MULTI-LAYER PERCEPTRON (MLP)
-# FULL PIPELINE WITH IMPUTATION & SCALING
+# EXPERIMENT 34 — ONE-VS-REST (OvR) BAGGED PERCEPTRON ENSEMBLE
 # ============================================================
 
 import pandas as pd
@@ -12,14 +11,13 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.neural_network import MLPClassifier
-# (Optional single-layer Perceptron alternative):
-# from sklearn.linear_model import Perceptron
-# from sklearn.calibration import CalibratedClassifierCV
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.ensemble import BaggingClassifier
 
 
 print("============================================")
-print("EXPERIMENT 33")
-print("PERCEPTRON / NEURAL NETWORK CLASSIFIER")
+print("EXPERIMENT 34")
+print("ONE-VS-REST (OvR) BAGGED PERCEPTRON")
 print("============================================")
 
 
@@ -134,7 +132,7 @@ categorical_features = X.select_dtypes(
 high_cardinality = []
 for column in categorical_features:
     unique_count = X[column].nunique(dropna=True)
-    if unique_count > 100:  # Cap at 100 for One-Hot Encoding
+    if unique_count > 100:
         high_cardinality.append(column)
         print(f"Dropping high-cardinality feature: {column} ({unique_count} categories)")
 
@@ -142,7 +140,6 @@ if high_cardinality:
     X = X.drop(columns=high_cardinality)
     X_test = X_test.drop(columns=high_cardinality)
 
-# Re-detect numerical and categorical columns
 categorical_features = X.select_dtypes(
     include=["object", "category", "bool"]
 ).columns.tolist()
@@ -164,7 +161,6 @@ print("Numerical features:", len(numerical_features))
 # 8. PREPROCESSING PIPELINES
 # ============================================================
 
-# Perceptrons require imputation and standard scaling
 numeric_transformer = Pipeline(steps=[
     ("imputer", SimpleImputer(strategy="median")),
     ("scaler", StandardScaler())
@@ -184,35 +180,41 @@ preprocessor = ColumnTransformer(
 
 
 # ============================================================
-# 9. MODEL SETUP
+# 9. ONE-VS-REST & BAGGED PERCEPTRON ARCHITECTURE
 # ============================================================
 
-# Multi-Layer Perceptron (Neural Network with ReLU activations and early stopping)
-perceptron_model = MLPClassifier(
-    hidden_layer_sizes=(64, 32),
+# Base multi-layer perceptron
+base_mlp = MLPClassifier(
+    hidden_layer_sizes=(128, 64),
     activation="relu",
     solver="adam",
-    alpha=0.01,              # L2 regularization penalty
+    alpha=0.005,
     batch_size=128,
     learning_rate_init=0.001,
     max_iter=300,
     early_stopping=True,
-    n_iter_no_change=20,
+    n_iter_no_change=15,
     validation_fraction=0.15,
     random_state=42
 )
 
-# NOTE: If you strictly want a classic single-layer linear Perceptron, you can replace
-# the above with:
-#
-# from sklearn.linear_model import Perceptron
-# from sklearn.calibration import CalibratedClassifierCV
-# base_p = Perceptron(penalty='l2', alpha=0.001, random_state=42)
-# perceptron_model = CalibratedClassifierCV(estimator=base_p, method='sigmoid', cv=5)
+# Explicit One-vs-Rest wrapper
+ovr_mlp = OneVsRestClassifier(base_mlp)
+
+# Bagging meta-estimator across 7 diverse bootstrap iterations
+bagged_ovr_model = BaggingClassifier(
+    estimator=ovr_mlp,
+    n_estimators=7,
+    max_samples=0.85,
+    max_features=0.90,
+    bootstrap=True,
+    random_state=42,
+    n_jobs=-1
+)
 
 pipeline = Pipeline(steps=[
     ("preprocessor", preprocessor),
-    ("model", perceptron_model)
+    ("model", bagged_ovr_model)
 ])
 
 
@@ -221,15 +223,13 @@ pipeline = Pipeline(steps=[
 # ============================================================
 
 print("\n============================================")
-print("TRAINING PERCEPTRON MODEL")
+print("TRAINING ONE-VS-REST BAGGED PERCEPTRON")
 print("============================================")
-print(f"Training on {len(X)} rows...")
+print(f"Training ensemble on {len(X)} rows...")
 
 pipeline.fit(X, y)
 
 print("\nTraining complete.")
-if hasattr(pipeline.named_steps["model"], "n_iter_"):
-    print(f"Iterations used: {pipeline.named_steps['model'].n_iter_}")
 
 
 # ============================================================
@@ -269,7 +269,7 @@ submission = pd.DataFrame({
 # 14. SAVE
 # ============================================================
 
-output_file = "submission_exp33_perceptron.csv"
+output_file = "submission_exp34_ovr_perceptron.csv"
 
 submission.to_csv(output_file, index=False)
 
@@ -279,7 +279,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 33 COMPLETE")
+print("EXPERIMENT 34 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -293,11 +293,11 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Current best ensemble : 0.64516")
-print("Exp 30 Logistic       : 0.59229")
-print("Exp 31 ExtraTrees     : 0.61732")
-print("Exp 32 HistGB         : PENDING")
-print("Exp 33 Perceptron/MLP : PENDING")
+print("Current best ensemble   : 0.64516")
+print("Exp 30 Logistic         : 0.59229")
+print("Exp 31 ExtraTrees       : 0.61732")
+print("Exp 33 Perceptron / MLP : 0.64453")
+print("Exp 34 OvR Bagged MLP   : PENDING")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
