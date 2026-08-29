@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 35 — HYBRID ENSEMBLE: PERCEPTRON (MLP) + LOGISTIC REGRESSION
-# SOFT-VOTING PROBABILITY BLEND
+# EXPERIMENT 36 — THE GOLDEN TRIFECTA
+# (PERCEPTRON MLP + LOGISTIC REGRESSION + GRADIENT BOOSTING)
 # ============================================================
 
 import pandas as pd
@@ -13,12 +13,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.neural_network import MLPClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
 
 
 print("============================================")
-print("EXPERIMENT 35")
-print("HYBRID: PERCEPTRON (MLP) + LOGISTIC REGRESSION")
+print("EXPERIMENT 36")
+print("TRI-HYBRID: MLP + LOGISTIC REGRESSION + HIST GB")
 print("============================================")
 
 
@@ -38,23 +38,11 @@ DATA_DIR = (
 # 2. LOAD DATA
 # ============================================================
 
-train_data = pd.read_csv(
-    DATA_DIR / "train.csv"
-)
-
-test_data = pd.read_csv(
-    DATA_DIR / "test.csv"
-)
-
-
-print("\n============================================")
-print("DATASET LOADED")
-print("============================================")
+train_data = pd.read_csv(DATA_DIR / "train.csv")
+test_data = pd.read_csv(DATA_DIR / "test.csv")
 
 print("Training rows:", len(train_data))
-print("Training columns:", len(train_data.columns))
 print("Testing rows:", len(test_data))
-print("Testing columns:", len(test_data.columns))
 
 
 # ============================================================
@@ -63,47 +51,24 @@ print("Testing columns:", len(test_data.columns))
 
 target = "employed_status"
 
-print("\nMissing target values:", train_data[target].isna().sum())
-
 train_clean = train_data.dropna(subset=[target]).copy()
-
-train_clean[target] = pd.to_numeric(
-    train_clean[target],
-    errors="coerce"
-)
-
+train_clean[target] = pd.to_numeric(train_clean[target], errors="coerce")
 train_clean = train_clean.dropna(subset=[target]).copy()
 train_clean[target] = train_clean[target].astype(int)
 
 y = train_clean[target]
-
-print("Training rows after cleaning:", len(train_clean))
-print("\nTarget distribution:")
-print(y.value_counts())
-
-
-# ============================================================
-# 4. CREATE X
-# ============================================================
-
 X = train_clean.drop(columns=[target]).copy()
 X_test = test_data.copy()
 
 
 # ============================================================
-# 5. REMOVE ID
+# 4. REMOVE ID & DATE FEATURES
 # ============================================================
 
 if "anonymised_id" in X.columns:
     X = X.drop(columns=["anonymised_id"])
-
 if "anonymised_id" in X_test.columns:
     X_test = X_test.drop(columns=["anonymised_id"])
-
-
-# ============================================================
-# 6. DATE FEATURES
-# ============================================================
 
 if "survey_date" in X.columns:
     X["survey_date"] = pd.to_datetime(X["survey_date"], errors="coerce")
@@ -111,10 +76,8 @@ if "survey_date" in X.columns:
 
     X["survey_year"] = X["survey_date"].dt.year
     X_test["survey_year"] = X_test["survey_date"].dt.year
-
     X["survey_month"] = X["survey_date"].dt.month
     X_test["survey_month"] = X_test["survey_date"].dt.month
-
     X["survey_dayofyear"] = X["survey_date"].dt.dayofyear
     X_test["survey_dayofyear"] = X_test["survey_date"].dt.dayofyear
 
@@ -123,43 +86,22 @@ if "survey_date" in X.columns:
 
 
 # ============================================================
-# 7. IDENTIFY & FILTER HIGH-CARDINALITY CATEGORICAL FEATURES
+# 5. CARDINALITY HANDLING
 # ============================================================
 
-categorical_features = X.select_dtypes(
-    include=["object", "category", "bool"]
-).columns.tolist()
+categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 
-high_cardinality = []
-for column in categorical_features:
-    unique_count = X[column].nunique(dropna=True)
-    if unique_count > 100:
-        high_cardinality.append(column)
-        print(f"Dropping high-cardinality feature: {column} ({unique_count} categories)")
-
+high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
 if high_cardinality:
     X = X.drop(columns=high_cardinality)
     X_test = X_test.drop(columns=high_cardinality)
 
-categorical_features = X.select_dtypes(
-    include=["object", "category", "bool"]
-).columns.tolist()
-
-numerical_features = X.select_dtypes(
-    include=[np.number]
-).columns.tolist()
-
-
-print("\n============================================")
-print("FINAL FEATURES")
-print("============================================")
-print("Total features:", len(X.columns))
-print("Categorical features:", len(categorical_features))
-print("Numerical features:", len(numerical_features))
+categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
 
 # ============================================================
-# 8. PREPROCESSING PIPELINES
+# 6. PREPROCESSOR & 3-WAY ENSEMBLE SETUP
 # ============================================================
 
 numeric_transformer = Pipeline(steps=[
@@ -179,12 +121,7 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-
-# ============================================================
-# 9. HYBRID MODELS SETUP
-# ============================================================
-
-# Model A: Multi-Layer Perceptron (The high-performing model from Exp 33)
+# 1. Non-linear Neural Perceptron
 mlp_model = MLPClassifier(
     hidden_layer_sizes=(64, 32),
     activation="relu",
@@ -199,7 +136,7 @@ mlp_model = MLPClassifier(
     random_state=42
 )
 
-# Model B: L2-Regularized Logistic Regression (Linear baseline stabilizer)
+# 2. Linear Regularized Anchor
 logistic_model = LogisticRegression(
     C=0.1,
     penalty="l2",
@@ -208,104 +145,56 @@ logistic_model = LogisticRegression(
     random_state=42
 )
 
-# Soft Voting Ensemble (75% weight on MLP, 25% weight on Logistic Regression)
-hybrid_ensemble = VotingClassifier(
+# 3. Decision-Tree Gradient Boosting
+hgb_model = HistGradientBoostingClassifier(
+    learning_rate=0.04,
+    max_iter=400,
+    max_leaf_nodes=31,
+    min_samples_leaf=20,
+    l2_regularization=1.0,
+    early_stopping=True,
+    validation_fraction=0.15,
+    n_iter_no_change=25,
+    random_state=42
+)
+
+tri_ensemble = VotingClassifier(
     estimators=[
-        ("perceptron_mlp", mlp_model),
-        ("logistic_regression", logistic_model)
+        ("mlp", mlp_model),
+        ("lr", logistic_model),
+        ("hgb", hgb_model)
     ],
     voting="soft",
-    weights=[3, 1]
+    weights=[3, 1, 2]   # Balanced weight distribution
 )
 
 pipeline = Pipeline(steps=[
     ("preprocessor", preprocessor),
-    ("ensemble", hybrid_ensemble)
+    ("ensemble", tri_ensemble)
 ])
 
 
 # ============================================================
-# 10. TRAIN
+# 7. TRAIN & PREDICT
 # ============================================================
 
-print("\n============================================")
-print("TRAINING HYBRID PERCEPTRON + REGRESSION")
-print("============================================")
-print(f"Training ensemble on {len(X)} rows...")
-
+print("\nTraining Tri-Model Ensemble...")
 pipeline.fit(X, y)
 
-print("\nTraining complete.")
-
-
-# ============================================================
-# 11. PREDICT
-# ============================================================
-
-print("\nGenerating test predictions...")
-
+print("Generating predictions...")
 probabilities = pipeline.predict_proba(X_test)[:, 1]
 
-
-# ============================================================
-# 12. VALIDATE PREDICTIONS
-# ============================================================
-
-if len(probabilities) != len(test_data):
-    raise ValueError("Prediction count does not match test data.")
-
-if np.isnan(probabilities).any():
-    raise ValueError("Predictions contain NaN values.")
-
-if (probabilities < 0).any() or (probabilities > 1).any():
-    raise ValueError("Predictions fall outside [0, 1] range.")
-
-
-# ============================================================
-# 13. CREATE SUBMISSION FILE
-# ============================================================
+# Validation
+assert len(probabilities) == len(test_data), "Length mismatch"
+assert not np.isnan(probabilities).any(), "NaN found in predictions"
 
 submission = pd.DataFrame({
     "anonymised_id": test_data["anonymised_id"],
     "employed_status": probabilities
 })
 
-
-# ============================================================
-# 14. SAVE
-# ============================================================
-
-output_file = "submission_exp35_perceptron_regression_blend.csv"
-
+output_file = "submission_exp36_tri_hybrid_ensemble.csv"
 submission.to_csv(output_file, index=False)
 
-
-# ============================================================
-# 15. SUMMARY & BENCHMARKS
-# ============================================================
-
-print("\n============================================")
-print("EXPERIMENT 35 COMPLETE")
-print("============================================")
-print(f"Saved: {output_file}")
-print(f"Rows: {len(submission)}")
-
-print("\nPrediction summary:")
+print(f"\nSaved successfully: {output_file}")
 print(submission["employed_status"].describe())
-
-print("\nFirst 10 predictions:")
-print(submission.head(10))
-
-print("\n============================================")
-print("BENCHMARKS")
-print("============================================")
-print("Current best ensemble     : 0.64516")
-print("Exp 30 Logistic           : 0.59229")
-print("Exp 31 ExtraTrees         : 0.61732")
-print("Exp 33 Perceptron / MLP   : 0.64453")
-print("Exp 34 OvR Bagged MLP     : 0.58784")
-print("Exp 35 Perceptron + LogReg: PENDING")
-
-print("\n============================================")
-print("READY FOR KAGGLE SUBMISSION")
-print("============================================")
