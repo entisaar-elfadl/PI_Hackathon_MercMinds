@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 31 — EXTRA TREES
-# ALL FEATURES
+# EXPERIMENT 32 — HISTOGRAM GRADIENT BOOSTING
+# FIXED HIGH-CARDINALITY VERSION
 # ============================================================
 
 import pandas as pd
@@ -8,16 +8,13 @@ import numpy as np
 
 from pathlib import Path
 
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.impute import SimpleImputer
-from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.preprocessing import OrdinalEncoder
 
 
 print("============================================")
-print("EXPERIMENT 31")
-print("EXTRA TREES — ALL FEATURES")
+print("EXPERIMENT 32")
+print("HISTOGRAM GRADIENT BOOSTING")
 print("============================================")
 
 
@@ -33,31 +30,17 @@ DATA_DIR = (
 ).resolve()
 
 
-print("\nDataset directory:")
-print(DATA_DIR)
-
-
 # ============================================================
 # 2. LOAD DATA
 # ============================================================
 
-train_file = DATA_DIR / "train.csv"
-test_file = DATA_DIR / "test.csv"
+train_data = pd.read_csv(
+    DATA_DIR / "train.csv"
+)
 
-
-if not train_file.exists():
-    raise FileNotFoundError(
-        f"Training file not found:\n{train_file}"
-    )
-
-if not test_file.exists():
-    raise FileNotFoundError(
-        f"Test file not found:\n{test_file}"
-    )
-
-
-train_data = pd.read_csv(train_file)
-test_data = pd.read_csv(test_file)
+test_data = pd.read_csv(
+    DATA_DIR / "test.csv"
+)
 
 
 print("\n============================================")
@@ -65,27 +48,32 @@ print("DATASET LOADED")
 print("============================================")
 
 print(
-    f"Training rows: {len(train_data)}"
+    "Training rows:",
+    len(train_data)
 )
 
 print(
-    f"Training columns: {len(train_data.columns)}"
+    "Training columns:",
+    len(train_data.columns)
 )
 
 print(
-    f"Testing rows: {len(test_data)}"
+    "Testing rows:",
+    len(test_data)
 )
 
 print(
-    f"Testing columns: {len(test_data.columns)}"
+    "Testing columns:",
+    len(test_data.columns)
 )
 
 
 # ============================================================
-# 3. TARGET
+# 3. CLEAN TARGET
 # ============================================================
 
 target = "employed_status"
+
 
 print(
     "\nMissing target values:",
@@ -93,25 +81,21 @@ print(
 )
 
 
-# ============================================================
-# 4. REMOVE MISSING TARGETS
-# ============================================================
-
 train_clean = train_data.dropna(
     subset=[target]
 ).copy()
 
-
-# Make target explicitly 0/1
 
 train_clean[target] = pd.to_numeric(
     train_clean[target],
     errors="coerce"
 )
 
+
 train_clean = train_clean.dropna(
     subset=[target]
-)
+).copy()
+
 
 train_clean[target] = train_clean[
     target
@@ -127,9 +111,7 @@ print(
 )
 
 
-print(
-    "\nTarget distribution:"
-)
+print("\nTarget distribution:")
 
 print(
     y.value_counts()
@@ -137,40 +119,91 @@ print(
 
 
 # ============================================================
-# 5. REMOVE TARGET FROM FEATURES
+# 4. CREATE X
 # ============================================================
 
 X = train_clean.drop(
     columns=[target]
 ).copy()
 
-
 X_test = test_data.copy()
 
 
 # ============================================================
-# 6. REMOVE ID FROM FEATURES
+# 5. REMOVE ID
 # ============================================================
 
-# anonymised_id is an identifier, not a meaningful predictor.
-
-id_column = "anonymised_id"
-
-if id_column in X.columns:
+if "anonymised_id" in X.columns:
 
     X = X.drop(
-        columns=[id_column]
+        columns=["anonymised_id"]
     )
 
-if id_column in X_test.columns:
+if "anonymised_id" in X_test.columns:
 
     X_test = X_test.drop(
-        columns=[id_column]
+        columns=["anonymised_id"]
     )
 
 
 # ============================================================
-# 7. IDENTIFY COLUMN TYPES
+# 6. DATE FEATURES
+# ============================================================
+
+# survey_date is not treated as a categorical variable.
+# Instead we extract useful numerical date information.
+
+if "survey_date" in X.columns:
+
+    X["survey_date"] = pd.to_datetime(
+        X["survey_date"],
+        errors="coerce"
+    )
+
+    X_test["survey_date"] = pd.to_datetime(
+        X_test["survey_date"],
+        errors="coerce"
+    )
+
+
+    X["survey_year"] = (
+        X["survey_date"].dt.year
+    )
+
+    X_test["survey_year"] = (
+        X_test["survey_date"].dt.year
+    )
+
+
+    X["survey_month"] = (
+        X["survey_date"].dt.month
+    )
+
+    X_test["survey_month"] = (
+        X_test["survey_date"].dt.month
+    )
+
+
+    X["survey_dayofyear"] = (
+        X["survey_date"].dt.dayofyear
+    )
+
+    X_test["survey_dayofyear"] = (
+        X_test["survey_date"].dt.dayofyear
+    )
+
+
+    X = X.drop(
+        columns=["survey_date"]
+    )
+
+    X_test = X_test.drop(
+        columns=["survey_date"]
+    )
+
+
+# ============================================================
+# 7. IDENTIFY CATEGORICAL FEATURES
 # ============================================================
 
 categorical_features = X.select_dtypes(
@@ -190,143 +223,198 @@ numerical_features = X.select_dtypes(
 
 
 print("\n============================================")
-print("FEATURE INFORMATION")
+print("INITIAL FEATURES")
 print("============================================")
 
 print(
-    "\nTotal features:",
-    len(X.columns)
-)
-
-print(
-    "Categorical features:",
+    "Categorical:",
     len(categorical_features)
 )
 
 print(
-    "Numerical features:",
+    "Numerical:",
     len(numerical_features)
 )
 
 
-print("\nCategorical:")
+# ============================================================
+# 8. REMOVE HIGH-CARDINALITY CATEGORICAL FEATURES
+# ============================================================
+
+# HistGradientBoosting supports at most 255 categories
+# for an individual categorical feature.
+
+high_cardinality = []
 
 for column in categorical_features:
-    print(" -", column)
+
+    unique_count = X[column].nunique(
+        dropna=True
+    )
+
+    if unique_count > 255:
+
+        high_cardinality.append(
+            column
+        )
+
+        print(
+            f"\nDropping high-cardinality feature:"
+            f" {column}"
+            f" ({unique_count} categories)"
+        )
 
 
-print("\nNumerical:")
+if high_cardinality:
+
+    X = X.drop(
+        columns=high_cardinality
+    )
+
+    X_test = X_test.drop(
+        columns=high_cardinality
+    )
+
+
+# Update categorical list
+
+categorical_features = X.select_dtypes(
+    include=[
+        "object",
+        "category",
+        "bool"
+    ]
+).columns.tolist()
+
+
+numerical_features = X.select_dtypes(
+    include=[
+        np.number
+    ]
+).columns.tolist()
+
+
+print("\n============================================")
+print("FINAL FEATURES")
+print("============================================")
+
+print(
+    "Total:",
+    len(X.columns)
+)
+
+print(
+    "Categorical:",
+    len(categorical_features)
+)
+
+print(
+    "Numerical:",
+    len(numerical_features)
+)
+
+
+print("\nCategorical features:")
+
+for column in categorical_features:
+
+    print(
+        f" - {column}: "
+        f"{X[column].nunique(dropna=True)} categories"
+    )
+
+
+print("\nNumerical features:")
 
 for column in numerical_features:
-    print(" -", column)
 
-
-# ============================================================
-# 8. CATEGORICAL PIPELINE
-# ============================================================
-
-categorical_pipeline = Pipeline([
-    (
-        "imputer",
-        SimpleImputer(
-            strategy="most_frequent"
-        )
-    ),
-
-    (
-        "onehot",
-        OneHotEncoder(
-            handle_unknown="ignore"
-        )
-    )
-])
-
-
-# ============================================================
-# 9. NUMERICAL PIPELINE
-# ============================================================
-
-numerical_pipeline = Pipeline([
-    (
-        "imputer",
-        SimpleImputer(
-            strategy="median"
-        )
-    )
-])
-
-
-# ============================================================
-# 10. PREPROCESSOR
-# ============================================================
-
-preprocessor = ColumnTransformer([
-
-    (
-        "categorical",
-        categorical_pipeline,
-        categorical_features
-    ),
-
-    (
-        "numerical",
-        numerical_pipeline,
-        numerical_features
+    print(
+        " -",
+        column
     )
 
-])
+
+# ============================================================
+# 9. ENCODE CATEGORICAL FEATURES
+# ============================================================
+
+encoder = OrdinalEncoder(
+    handle_unknown="use_encoded_value",
+    unknown_value=np.nan
+)
+
+
+if len(categorical_features) > 0:
+
+    X[categorical_features] = (
+        encoder.fit_transform(
+            X[categorical_features]
+        )
+    )
+
+    X_test[categorical_features] = (
+        encoder.transform(
+            X_test[categorical_features]
+        )
+    )
 
 
 # ============================================================
-# 11. EXTRA TREES
+# 10. CATEGORICAL MASK
 # ============================================================
 
-model = ExtraTreesClassifier(
+categorical_mask = [
+    column in categorical_features
+    for column in X.columns
+]
 
-    n_estimators=800,
 
-    max_depth=None,
+print("\nCategorical mask:")
 
-    min_samples_split=4,
+print(
+    categorical_mask
+)
 
-    min_samples_leaf=2,
 
-    max_features="sqrt",
+# ============================================================
+# 11. MODEL
+# ============================================================
 
-    class_weight="balanced",
+model = HistGradientBoostingClassifier(
 
-    random_state=42,
+    loss="log_loss",
 
-    n_jobs=-1
+    learning_rate=0.04,
+
+    max_iter=600,
+
+    max_leaf_nodes=31,
+
+    min_samples_leaf=20,
+
+    l2_regularization=1.0,
+
+    max_features=0.8,
+
+    categorical_features=categorical_mask,
+
+    early_stopping=True,
+
+    validation_fraction=0.15,
+
+    n_iter_no_change=40,
+
+    random_state=42
 
 )
 
 
 # ============================================================
-# 12. COMPLETE PIPELINE
-# ============================================================
-
-extra_trees = Pipeline([
-
-    (
-        "preprocessor",
-        preprocessor
-    ),
-
-    (
-        "model",
-        model
-    )
-
-])
-
-
-# ============================================================
-# 13. TRAIN
+# 12. TRAIN
 # ============================================================
 
 print("\n============================================")
-print("TRAINING EXTRA TREES")
+print("TRAINING")
 print("============================================")
 
 print(
@@ -336,44 +424,51 @@ print(
 )
 
 
-extra_trees.fit(
+model.fit(
     X,
     y
 )
 
 
 print(
-    "Training complete."
+    "\nTraining complete."
+)
+
+print(
+    "Iterations used:",
+    model.n_iter_
 )
 
 
 # ============================================================
-# 14. PREDICT
+# 13. PREDICT
 # ============================================================
 
-print("\nGenerating test predictions...")
+print(
+    "\nGenerating test predictions..."
+)
 
 
-probabilities = extra_trees.predict_proba(
+probabilities = model.predict_proba(
     X_test
 )[:, 1]
 
 
 # ============================================================
-# 15. VALIDATE
+# 14. VALIDATE
 # ============================================================
 
 if len(probabilities) != len(test_data):
 
     raise ValueError(
-        "Prediction count does not match test rows."
+        "Prediction count does not match test data."
     )
 
 
 if np.isnan(probabilities).any():
 
     raise ValueError(
-        "Predictions contain NaN values."
+        "Predictions contain NaN."
     )
 
 
@@ -389,7 +484,7 @@ if (
 
 
 # ============================================================
-# 16. CREATE SUBMISSION
+# 15. CREATE SUBMISSION
 # ============================================================
 
 submission = pd.DataFrame({
@@ -404,42 +499,11 @@ submission = pd.DataFrame({
 
 
 # ============================================================
-# 17. VALIDATE SUBMISSION
-# ============================================================
-
-if len(submission) != len(test_data):
-
-    raise ValueError(
-        "Submission row count mismatch."
-    )
-
-
-if submission[
-    "employed_status"
-].isna().any():
-
-    raise ValueError(
-        "Submission contains NaN predictions."
-    )
-
-
-if not submission[
-    "anonymised_id"
-].equals(
-    test_data["anonymised_id"]
-):
-
-    raise ValueError(
-        "ID ordering does not match test data."
-    )
-
-
-# ============================================================
-# 18. SAVE
+# 16. SAVE
 # ============================================================
 
 output_file = (
-    "submission_exp31_extra_trees.csv"
+    "submission_exp32_hist_gradient_boosting.csv"
 )
 
 
@@ -450,11 +514,11 @@ submission.to_csv(
 
 
 # ============================================================
-# 19. SUMMARY
+# 17. SUMMARY
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 31 COMPLETE")
+print("EXPERIMENT 32 COMPLETE")
 print("============================================")
 
 print(
@@ -468,12 +532,8 @@ print(
 )
 
 print(
-    "Columns:",
-    len(submission.columns)
+    "\nPrediction summary:"
 )
-
-
-print("\nPrediction summary:")
 
 print(
     submission[
@@ -482,7 +542,9 @@ print(
 )
 
 
-print("\nFirst 10 predictions:")
+print(
+    "\nFirst 10 predictions:"
+)
 
 print(
     submission.head(10)
@@ -490,7 +552,7 @@ print(
 
 
 # ============================================================
-# 20. BENCHMARKS
+# 18. BENCHMARKS
 # ============================================================
 
 print("\n============================================")
@@ -506,7 +568,11 @@ print(
 )
 
 print(
-    "Exp 31 ExtraTrees     : PENDING"
+    "Exp 31 ExtraTrees     : 0.61732"
+)
+
+print(
+    "Exp 32 HistGB         : PENDING"
 )
 
 
