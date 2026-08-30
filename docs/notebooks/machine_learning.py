@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 42 — 21-MODEL MULTI-ARCHITECTURE NEURAL COMMITTEE
-# (3 DIVERSE MLP ARCHITECTURES + DUAL REGULARIZED LINEAR ANCHORS)
+# EXPERIMENT 43 — AUTOMATED ROUND TOURNAMENT & MODEL SELECTION
+# (FIXED: AUTO-VALIDATES FEATURE OVERLAP & BENCHMARKS ON VALID ROUNDS)
 # ============================================================
 
 import pandas as pd
@@ -12,14 +12,15 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.neural_network import MLPClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import VotingClassifier
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 42")
-print("21-MODEL MULTI-ARCHITECTURE NEURAL COMMITTEE")
+print("EXPERIMENT 43")
+print("AUTOMATED ROUND TOURNAMENT & MODEL SELECTION")
 print("============================================")
 
 
@@ -39,23 +40,26 @@ if not ROUND_DIR.exists():
 
 
 # ============================================================
-# 2. FEATURE PIPELINE BUILDERS
+# 2. ROBUST DATA CLEANING & TYPE COERCION
 # ============================================================
 
 target = "employed_status"
 
 def clean_data_and_extract_features(df):
-    """Applies clean date extraction and ID handling."""
+    """Cleans IDs, dates, and automatically coerces numerical datatypes."""
     data = df.copy()
 
+    # Clean target if present
     if target in data.columns:
         data[target] = pd.to_numeric(data[target], errors="coerce")
         data = data.dropna(subset=[target]).copy()
         data[target] = data[target].astype(int)
 
+    # Drop ID
     if "anonymised_id" in data.columns:
         data = data.drop(columns=["anonymised_id"])
 
+    # Date extraction
     if "survey_date" in data.columns:
         data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
         data["survey_year"] = data["survey_date"].dt.year
@@ -63,178 +67,220 @@ def clean_data_and_extract_features(df):
         data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
         data = data.drop(columns=["survey_date"])
 
+    # Auto-convert numeric columns that were parsed as object
+    for col in data.columns:
+        if col != target and data[col].dtype == "object":
+            converted = pd.to_numeric(data[col], errors="coerce")
+            if converted.notna().sum() > 0.6 * data[col].notna().sum():
+                data[col] = converted
+
     return data
 
 
-def create_committee_pipeline(numerical_cols, categorical_cols, seed=42):
-    """Builds a multi-architecture committee of 3 MLPs + 2 Logistic Regressors."""
-    numeric_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler())
-    ])
+def build_preprocessor(numerical_cols, categorical_cols):
+    """Safely builds ColumnTransformer handling empty subsets."""
+    transformers = []
 
-    categorical_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-    ])
+    if len(numerical_cols) > 0:
+        numeric_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler())
+        ])
+        transformers.append(("num", numeric_transformer, numerical_cols))
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, numerical_cols),
-            ("cat", categorical_transformer, categorical_cols)
-        ]
-    )
+    if len(categorical_cols) > 0:
+        categorical_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+        ])
+        transformers.append(("cat", categorical_transformer, categorical_cols))
 
-    # Architecture A: Proven Medium 2-Layer MLP
-    mlp_medium = MLPClassifier(
-        hidden_layer_sizes=(64, 32),
-        activation="relu",
-        solver="adam",
-        alpha=0.01,
-        batch_size=128,
-        learning_rate_init=0.001,
-        max_iter=350,
-        early_stopping=True,
-        n_iter_no_change=20,
-        validation_fraction=0.15,
-        random_state=seed
-    )
-
-    # Architecture B: Deep 3-Layer MLP
-    mlp_deep = MLPClassifier(
-        hidden_layer_sizes=(128, 64, 32),
-        activation="relu",
-        solver="adam",
-        alpha=0.02,
-        batch_size=128,
-        learning_rate_init=0.001,
-        max_iter=350,
-        early_stopping=True,
-        n_iter_no_change=20,
-        validation_fraction=0.15,
-        random_state=seed + 100
-    )
-
-    # Architecture C: Compact Regularized MLP
-    mlp_compact = MLPClassifier(
-        hidden_layer_sizes=(48, 24),
-        activation="relu",
-        solver="adam",
-        alpha=0.005,
-        batch_size=128,
-        learning_rate_init=0.001,
-        max_iter=350,
-        early_stopping=True,
-        n_iter_no_change=20,
-        validation_fraction=0.15,
-        random_state=seed + 200
-    )
-
-    # Linear Anchor 1 (C=0.1)
-    lr_1 = LogisticRegression(
-        C=0.1,
-        penalty="l2",
-        solver="lbfgs",
-        max_iter=1000,
-        random_state=seed
-    )
-
-    # Linear Anchor 2 (C=0.05, higher regularization)
-    lr_2 = LogisticRegression(
-        C=0.05,
-        penalty="l2",
-        solver="lbfgs",
-        max_iter=1000,
-        random_state=seed + 50
-    )
-
-    committee = VotingClassifier(
-        estimators=[
-            ("mlp_med", mlp_medium),
-            ("mlp_deep", mlp_deep),
-            ("mlp_comp", mlp_compact),
-            ("lr_1", lr_1),
-            ("lr_2", lr_2)
-        ],
-        voting="soft",
-        weights=[3.0, 2.5, 2.0, 1.0, 0.5]
-    )
-
-    return Pipeline(steps=[
-        ("preprocessor", preprocessor),
-        ("committee", committee)
-    ])
+    return ColumnTransformer(transformers=transformers)
 
 
 # ============================================================
-# 3. RUN ROUND TESTING (EXPANDING TEMPORAL VALIDATION)
+# 3. CANDIDATE MODEL FACTORIES
+# ============================================================
+
+def get_candidate_models(seed=42):
+    """Returns a dictionary of diverse competitive model candidates."""
+    
+    # 1. Logistic Regression
+    lr = LogisticRegression(C=0.1, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed)
+    
+    # 2. Calibrated Ridge Classifier
+    ridge_base = RidgeClassifier(alpha=1.0, random_state=seed)
+    ridge_cal = CalibratedClassifierCV(estimator=ridge_base, method="sigmoid", cv=3)
+    
+    # 3. MLP Medium (64, 32)
+    mlp_med = MLPClassifier(
+        hidden_layer_sizes=(64, 32), activation="relu", solver="adam",
+        alpha=0.01, batch_size=128, learning_rate_init=0.001,
+        max_iter=350, early_stopping=True, n_iter_no_change=20,
+        validation_fraction=0.15, random_state=seed
+    )
+    
+    # 4. Deep MLP (128, 64)
+    mlp_deep = MLPClassifier(
+        hidden_layer_sizes=(128, 64), activation="relu", solver="adam",
+        alpha=0.02, batch_size=128, learning_rate_init=0.001,
+        max_iter=350, early_stopping=True, n_iter_no_change=20,
+        validation_fraction=0.15, random_state=seed + 10
+    )
+    
+    # 5. HistGradientBoosting Trees
+    hgb = HistGradientBoostingClassifier(
+        loss="log_loss", learning_rate=0.03, max_iter=300,
+        max_leaf_nodes=31, min_samples_leaf=25, l2_regularization=2.0,
+        early_stopping=True, n_iter_no_change=20, validation_fraction=0.15,
+        random_state=seed
+    )
+    
+    # 6. Winning Exp 41 Hybrid (MLP + Logistic)
+    hybrid_exp41 = VotingClassifier(
+        estimators=[("mlp", mlp_med), ("lr", lr)],
+        voting="soft", weights=[3.5, 1.0]
+    )
+    
+    # 7. Tri-Hybrid (MLP + Logistic + Trees)
+    tri_hybrid = VotingClassifier(
+        estimators=[("mlp", mlp_med), ("lr", lr), ("hgb", hgb)],
+        voting="soft", weights=[3.0, 1.0, 1.5]
+    )
+
+    # 8. Multi-Linear Neural Blend (MLP + Ridge + Logistic)
+    linear_neural_blend = VotingClassifier(
+        estimators=[("mlp", mlp_med), ("ridge", ridge_cal), ("lr", lr)],
+        voting="soft", weights=[4.0, 1.0, 1.0]
+    )
+
+    return {
+        "Logistic Regression": lr,
+        "Calibrated Ridge": ridge_cal,
+        "MLP Medium (64-32)": mlp_med,
+        "MLP Deep (128-64)": mlp_deep,
+        "HistGradientBoosting": hgb,
+        "Exp41 MLP+Logistic Hybrid": hybrid_exp41,
+        "Tri-Hybrid (MLP+LR+HGB)": tri_hybrid,
+        "Multi-Linear Neural Blend": linear_neural_blend
+    }
+
+
+# ============================================================
+# 4. DISCOVER & LOAD VALID ROUND DATASETS
 # ============================================================
 
 print("\n============================================")
-print("EVALUATING TEMPORAL ROUND PERFORMANCE")
+print("DISCOVERING SEQUENTIAL ROUND DATASETS")
 print("============================================")
 
-round_scores = {}
+round_data_list = []
 
 if ROUND_DIR.exists():
     round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
-    print(f"Found {len(round_folders)} round folders in: {ROUND_DIR.name}/")
+    print(f"Scanning {len(round_folders)} round folders in: {ROUND_DIR.name}/")
 
     for r_dir in round_folders:
-        round_name = r_dir.name
         csv_files = list(r_dir.glob("*.csv"))
+        if len(csv_files) >= 2:
+            csv_files = sorted(csv_files, key=lambda f: f.stat().st_size)
+            test_file = csv_files[0]   # smaller CSV
+            train_file = csv_files[1]  # larger CSV
 
-        train_files = [f for f in csv_files if "round_1_" in f.name or "train" in f.name]
-        test_files = [f for f in csv_files if f not in train_files]
+            r_train_raw = pd.read_csv(train_file)
+            r_test_raw = pd.read_csv(test_file)
 
-        if not train_files or not test_files:
-            continue
+            if target in r_train_raw.columns and target in r_test_raw.columns:
+                r_train = clean_data_and_extract_features(r_train_raw)
+                r_test = clean_data_and_extract_features(r_test_raw)
 
-        r_train_raw = pd.read_csv(train_files[0])
-        r_test_raw = pd.read_csv(test_files[0])
+                # Keep only common features between train and test
+                common_features = [c for c in r_train.columns if c in r_test.columns and c != target]
 
-        if target not in r_train_raw.columns or target not in r_test_raw.columns:
-            continue
-
-        r_train = clean_data_and_extract_features(r_train_raw)
-        r_test = clean_data_and_extract_features(r_test_raw)
-
-        y_r_train = r_train[target]
-        X_r_train = r_train.drop(columns=[target])
-        y_r_test = r_test[target]
-        X_r_test = r_test.drop(columns=[target])
-
-        # Drop cardinality > 100
-        cat_cols = X_r_train.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-        high_card = [c for c in cat_cols if X_r_train[c].nunique(dropna=True) > 100]
-        if high_card:
-            X_r_train = X_r_train.drop(columns=high_card)
-            X_r_test = X_r_test.drop(columns=high_card)
-
-        cat_cols = X_r_train.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-        num_cols = X_r_train.select_dtypes(include=[np.number]).columns.tolist()
-
-        model = create_committee_pipeline(num_cols, cat_cols, seed=42)
-        model.fit(X_r_train, y_r_train)
-
-        probs = model.predict_proba(X_r_test)[:, 1]
-        score = roc_auc_score(y_r_test, probs)
-        acc = accuracy_score(y_r_test, (probs >= 0.5).astype(int))
-
-        round_scores[round_name] = score
-        print(f" -> {round_name.upper():<10} | Training Rows: {len(X_r_train):<6} | Test Rows: {len(X_r_test):<5} | ROC-AUC: {score:.5f} | Acc: {acc:.4f}")
-
-    if round_scores:
-        avg_round_auc = np.mean(list(round_scores.values()))
-        print(f"\nAverage Sequential Round ROC-AUC: {avg_round_auc:.5f}")
+                if len(common_features) >= 5:
+                    round_data_list.append({
+                        "name": r_dir.name,
+                        "X_train": r_train[common_features],
+                        "y_train": r_train[target],
+                        "X_test": r_test[common_features],
+                        "y_test": r_test[target]
+                    })
+                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train)} rows | Test: {len(r_test)} rows | Common Features: {len(common_features)}")
+                else:
+                    print(f" -> Skipping {r_dir.name.upper()} (Only {len(common_features)} common feature(s) found)")
 
 
 # ============================================================
-# 4. LOAD FULL COMPETITION DATA
+# 5. RUN AUTOMATED ROUND TOURNAMENT
 # ============================================================
 
 print("\n============================================")
-print("TRAINING 21-MODEL COMMITTEE ON FULL DATASET")
+print("STARTING TOURNAMENT ACROSS VALID ROUNDS")
+print("============================================")
+
+candidate_names = list(get_candidate_models(seed=42).keys())
+tournament_scores = {name: [] for name in candidate_names}
+round_names = []
+
+for r_data in round_data_list:
+    r_name = r_data["name"]
+    round_names.append(r_name.upper())
+    X_tr = r_data["X_train"].copy()
+    y_tr = r_data["y_train"].copy()
+    X_te = r_data["X_test"].copy()
+    y_te = r_data["y_test"].copy()
+
+    # Drop high cardinality (>100) on true categorical columns only
+    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
+    if high_card:
+        X_tr = X_tr.drop(columns=high_card)
+        X_te = X_te.drop(columns=high_card)
+
+    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
+
+    models_dict = get_candidate_models(seed=42)
+
+    for model_name, model_obj in models_dict.items():
+        preprocessor = build_preprocessor(num_cols, cat_cols)
+        pipe = Pipeline(steps=[
+            ("preprocessor", preprocessor),
+            ("model", model_obj)
+        ])
+        pipe.fit(X_tr, y_tr)
+        probs = pipe.predict_proba(X_te)[:, 1]
+        score = roc_auc_score(y_te, probs)
+        tournament_scores[model_name].append(score)
+
+# Leaderboard Summary
+results_table = []
+for model_name, scores in tournament_scores.items():
+    mean_score = np.mean(scores) if scores else 0.0
+    row = {"Model Architecture": model_name, "Mean Round AUC": mean_score}
+    for i, s in enumerate(scores):
+        row[f"{round_names[i]} AUC"] = s
+    results_table.append(row)
+
+leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
+
+print("\n============================================")
+print("TOURNAMENT LEADERBOARD")
+print("============================================")
+print(leaderboard_df.to_string(index=False))
+
+# Automatically select the winning model
+best_model_name = leaderboard_df.iloc[0]["Model Architecture"]
+best_model_score = leaderboard_df.iloc[0]["Mean Round AUC"]
+print(f"\n🏆 CHAMPION MODEL SELECTED: '{best_model_name}' (Mean Round AUC: {best_model_score:.5f})")
+
+
+# ============================================================
+# 6. TRAIN CHAMPION ON FULL DATASET (MULTI-SEED)
+# ============================================================
+
+print("\n============================================")
+print(f"TRAINING CHAMPION ('{best_model_name}') ON FULL DATASET")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
@@ -243,11 +289,14 @@ test_raw = pd.read_csv(DATA_DIR / "test.csv")
 train_df = clean_data_and_extract_features(train_raw)
 test_df = clean_data_and_extract_features(test_raw)
 
-y_full = train_df[target].reset_index(drop=True)
-X_full = train_df.drop(columns=[target]).reset_index(drop=True)
-X_test_full = test_df.reset_index(drop=True)
+# Keep common columns
+common_cols = [c for c in train_df.columns if c in test_df.columns and c != target]
 
-# Drop high-cardinality (>100)
+y_full = train_df[target].reset_index(drop=True)
+X_full = train_df[common_cols].reset_index(drop=True)
+X_test_full = test_df[common_cols].reset_index(drop=True)
+
+# Drop high-cardinality categorical (>100)
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
 if high_cardinality:
@@ -260,27 +309,27 @@ numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
 print(f"Training on {len(X_full)} full dataset rows...")
 print(f"Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
-
-# ============================================================
-# 5. MULTI-SEED INFERENCE ACROSS 7 SEEDS (21 DIVERSE MODELS)
-# ============================================================
-
-SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
+# Multi-seed training across 5 diverse seeds
+SEEDS = [42, 101, 777, 2024, 999]
 full_test_predictions = np.zeros((len(X_test_full), len(SEEDS)))
 
-print(f"\nTraining committee across {len(SEEDS)} distinct seeds...")
 for i, seed in enumerate(SEEDS):
-    print(f" -> Fitting Seed {seed} ({i + 1}/{len(SEEDS)})...")
-    committee_pipe = create_committee_pipeline(numerical_features, categorical_features, seed=seed)
-    committee_pipe.fit(X_full, y_full)
-    full_test_predictions[:, i] = committee_pipe.predict_proba(X_test_full)[:, 1]
+    champion_dict = get_candidate_models(seed=seed)
+    champion_estimator = champion_dict[best_model_name]
 
-# Final smooth committee average
+    preprocessor = build_preprocessor(numerical_features, categorical_features)
+    champion_pipe = Pipeline(steps=[
+        ("preprocessor", preprocessor),
+        ("champion", champion_estimator)
+    ])
+    champion_pipe.fit(X_full, y_full)
+    full_test_predictions[:, i] = champion_pipe.predict_proba(X_test_full)[:, 1]
+
 final_probabilities = full_test_predictions.mean(axis=1)
 
 
 # ============================================================
-# 6. VALIDATE PREDICTIONS
+# 7. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -290,12 +339,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-
-# ============================================================
-# 7. SAVE SUBMISSION FILE
-# ============================================================
-
-output_file = "submission_exp42_neural_committee_ensemble.csv"
+output_file = "submission_exp43_best_round_selected_model.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_raw["anonymised_id"],
@@ -310,7 +354,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 42 COMPLETE")
+print("EXPERIMENT 43 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -324,14 +368,10 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 35 Single Hybrid Blend    : 0.65089")
-print("Exp 37 5-Fold Hybrid Blend    : 0.65247")
-print("Exp 41 Sequential Multi-Seed  : 0.65325 (Current Best)")
-if round_scores:
-    for r_name, score in round_scores.items():
-        print(f"Exp 42 {r_name.upper()} Holdout AUC   : {score:.5f}")
-    print(f"Exp 42 Mean Round AUC         : {avg_round_auc:.5f}")
-print("Exp 42 21-Model Full Ensemble : READY")
+print("Exp 35 Hybrid Single Blend : 0.65089")
+print("Exp 37 5-Fold Hybrid Blend : 0.65247")
+print("Exp 41 Sequential Hybrid   : 0.65325 (Previous Best)")
+print(f"Exp 43 Round Tournament    : Selected '{best_model_name}' ({best_model_score:.5f} Round AUC)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
