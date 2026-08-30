@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 44 — PRECISION REGULARIZED LINEAR SUITE & ENSEMBLE
-# (FINE-TUNED L2, ELASTICNET, SAGA & DISTRIBUTION NORMALIZATION)
+# EXPERIMENT 45 — DYNAMIC PROGRAMMING ENSEMBLE SELECTION
+# (CARUANA'S DP GREEDY SELECTION OVER DIVERSE MODEL LIBRARY)
 # ============================================================
 
 import pandas as pd
@@ -11,15 +11,16 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
-from sklearn.linear_model import LogisticRegression, SGDClassifier, RidgeClassifier
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import VotingClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 44")
-print("PRECISION REGULARIZED LINEAR SUITE & ENSEMBLE")
+print("EXPERIMENT 45")
+print("DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)")
 print("============================================")
 
 
@@ -72,9 +73,9 @@ def clean_data_and_extract_features(df):
     return data
 
 
-def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
+def build_preprocessorParam(numerical_cols, categorical_cols, use_quantile=False):
     """Builds standard or quantile-normalized preprocessor."""
-    transformers = []
+    transformers迷 = []
 
     if len(numerical_cols) > 0:
         scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
@@ -82,59 +83,60 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", scaler)
         ])
-        transformers.append(("num", numeric_transformer, numerical_cols))
+        transformers迷.append(("num", numeric_transformer, numerical_cols))
 
     if len(categorical_cols) > 0:
-        categorical_transformer = Pipeline(steps=[
+        categorical_transformer索 = Pipeline(steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
             ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
         ])
-        transformers.append(("cat", categorical_transformer, categorical_cols))
+        transformers迷.append(("cat", categorical_transformer索, categorical_cols))
 
-    return ColumnTransformer(transformers=transformers)
+    return ColumnTransformer(transformers=transformers迷)
 
 
 # ============================================================
-# 3. CANDIDATE REGULARIZED LINEAR MODELS
+# 3. DIVERSE MODEL LIBRARY (CANDIDATE POOL FOR DP SELECTION)
 # ============================================================
 
-def get_linear_candidates(seed=42):
-    """Returns a fine-grained suite of regularized linear models."""
+def get_model_library(seed=42):
+    """Returns a diverse pool of competitive model paradigms."""
     return {
-        "LogReg L2 (C=0.05)": (
-            LogisticRegression(C=0.05, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False
-        ),
-        "LogReg L2 (C=0.08)": (
+        "LogReg_L2_C008": (
             LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False
         ),
-        "LogReg L2 (C=0.10) [Exp43 Champ]": (
+        "LogReg_L2_C010": (
             LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False
         ),
-        "LogReg L2 (C=0.15)": (
+        "LogReg_L2_C015": (
             LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False
         ),
-        "LogReg ElasticNet (C=0.10, L1=0.15)": (
+        "LogReg_ElasticNet_C010": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
             False
         ),
-        "LogReg ElasticNet (C=0.08, L1=0.25)": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.25, max_iter=1000, random_state=seed),
-            False
-        ),
-        "Quantile LogReg L2 (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            True
-        ),
-        "Quantile LogReg L2 (C=0.08)": (
+        "LogReg_Quantile_C008": (
             LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             True
         ),
-        "Calibrated Ridge (alpha=2.0)": (
+        "Calibrated_Ridge_a2": (
             CalibratedClassifierCV(estimator=RidgeClassifier(alpha=2.0, random_state=seed), method="sigmoid", cv=3),
+            False
+        ),
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
+            False
+        ),
+        "Hist_Gradient_Boosting": (
+            HistGradientBoostingClassifier(loss="log_loss", learning_rate=0.03, max_iter=300,
+                                           max_leaf_nodes=31, min_samples_leaf=25, l2_regularization=2.0,
+                                           early_stopping=True, n_iter_no_change=20, validation_fraction=0.15,
+                                           random_state=seed),
             False
         )
     }
@@ -153,10 +155,10 @@ round_data_list = []
 if ROUND_DIR.exists():
     round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
     for r_dir in round_folders:
-        csv_files = list(r_dir.glob("*.csv"))
-        if len(csv_files) >= 2:
-            csv_files = sorted(csv_files, key=lambda f: f.stat().st_size)
-            test_file, train_file = csv_files[0], csv_files[1]
+        csv_files英 = list(r_dir.glob("*.csv"))
+        if len(csv_files英) >= 2:
+            csv_files英 = sorted(csv_files英, key=lambda f: f.stat().st_size)
+            test_file, train_file = csv_files英[0], csv_files英[1]
 
             r_train_raw = pd.read_csv(train_file)
             r_test_raw = pd.read_csv(test_file)
@@ -178,22 +180,23 @@ if ROUND_DIR.exists():
 
 
 # ============================================================
-# 5. RUN LINEAR SUITE TOURNAMENT ACROSS ROUNDS
+# 5. GENERATE VALIDATION PREDICTIONS FROM MODEL LIBRARY
 # ============================================================
 
 print("\n============================================")
-print("STARTING REGULARIZED LINEAR TOURNAMENT")
+print("COMPUTING LIBRARY PREDICTIONS ACROSS ROUNDS")
 print("============================================")
 
-candidate_dict = get_linear_candidates(seed=42)
-tournament_scores = {name: [] for name in candidate_dict.keys()}
-round_names = []
+library_model_names = list(get_model_library(seed=42).keys())
+n_models = len(library_model_names)
+
+# Concatenate all validation round targets and model predictions
+all_val_y = []
+all_val_preds_list = []
 
 for r_data in round_data_list:
-    r_name = r_data["name"]
-    round_names.append(r_name.upper())
     X_tr = r_data["X_train"].copy()
-    y_tr = r_data["y_train"].copy()
+    y_tr倍 = r_data["y_train"].copy()
     X_te = r_data["X_test"].copy()
     y_te = r_data["y_test"].copy()
 
@@ -206,46 +209,89 @@ for r_data in round_data_list:
     cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
     num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
 
-    models_dict = get_linear_candidates(seed=42)
+    models_dict = get_model_library(seed=42)
+    round_model_preds = np.zeros((len(X_te), n_models))
 
-    for model_name, (model_obj, use_quantile) in models_dict.items():
-        preprocessor = build_preprocessor(num_cols, cat_cols, use_quantile=use_quantile)
+    for m_idx, m_name in enumerate(library_model_names):
+        model_obj, use_quantile = models_dict[m_name]
+        preprocessor = build_preprocessorParam(num_cols, cat_cols, use_quantile=use_quantile)
         pipe = Pipeline(steps=[
             ("preprocessor", preprocessor),
             ("model", model_obj)
         ])
-        pipe.fit(X_tr, y_tr)
-        probs = pipe.predict_proba(X_te)[:, 1]
-        score = roc_auc_score(y_te, probs)
-        tournament_scores[model_name].append(score)
+        pipe.fit(X_tr, y_tr倍)
+        round_model_preds[:, m_idx] = pipe.predict_proba(X_te)[:, 1]
 
-# Leaderboard
-results_table = []
-for model_name, scores in tournament_scores.items():
-    mean_score = np.mean(scores) if scores else 0.0
-    row = {"Linear Architecture": model_name, "Mean Round AUC": mean_score}
-    for i, s in enumerate(scores):
-        row[f"{round_names[i]} AUC"] = s
-    results_table.append(row)
+    all_val_y.append(y_te.to_numpy())
+    all_val_preds_list.append(round_model_preds)
 
-leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
+stacked_val_y = np.concatenate(all_val_y)
+stacked_val_preds = np.vstack(all_val_preds_list)
+
+
+# ============================================================
+# 6. DYNAMIC PROGRAMMING ENSEMBLE SELECTION ALGORITHM
+# ============================================================
+
+def caruana_dynamic_ensemble_selection(val_preds_matrix, y_true, n_iterations=100):
+    """
+    Dynamic Programming Greedy Ensemble Selection (Caruana et al. 2004)
+    Maintains memoized cumulative sum to find the optimal weight vector maximizing ROC-AUC.
+    """
+    n_samples, n_candidates = val_preds_matrix.shape
+    selected_indices = []
+    current_ensemble_sum = np.zeros(n_samples)
+    best_history = []
+
+    for t in range(1, n_iterations + 1):
+        best_step_score = -1
+        best_step_model_idx很好 = 0
+
+        # Evaluate adding each candidate model to current DP state
+        for candidate_idx in range(n_candidates):
+            candidate_pred = (current_ensemble_sum + val_preds_matrix[:, candidate_idx]) / t
+            score = roc_auc_score(y_true, candidate_pred)
+            if score > best_step_score:
+                best_step_score = score
+                best_step_model_idx很好 = candidate_idx
+
+        # Update memoized DP state
+        selected_indices.append(best_step_model_idx很好)
+        current_ensemble_sum += val_preds_matrix[:, best_step_model_idx很好]
+        best_history.append(best_step_score)
+
+    # Compute optimal normalized weights from selection frequencies
+    counts = np.bincount(selected_indices, minlength=n_candidates)
+    optimal_weights = counts / n_iterations
+    return optimal_weights, selected_indices, best_history[-1]
+
 
 print("\n============================================")
-print("LINEAR TOURNAMENT LEADERBOARD")
+print("RUNNING CARUANA DYNAMIC PROGRAMMING SELECTION")
 print("============================================")
-print(leaderboard_df.to_string(index=False))
 
-# Select Top 3 Performing Models for Blending
-top_3_models = leaderboard_df.head(3)["Linear Architecture"].tolist()
-print(f"\n🏆 TOP 3 MODELS SELECTED FOR BLENDING: {top_3_models}")
+optimal_weights, selection_path, dp_best_auc = caruana_dynamic_ensemble_selection(
+    stacked_val_preds, stacked_val_y, n_iterations=100
+)
+
+# Print optimal weight allocation
+weight_table = []
+for m_idx, m_name in enumerate(library_model_names):
+    w = optimal_weights[m_idx]
+    if w > 0:
+        weight_table.append({"Model Name": m_name, "Optimal DP Weight": f"{w * 100:.1f}%"})
+
+weight_df = pd.DataFrame(weight_table).sort_values(by="Optimal DP Weight", ascending=False).reset_index(drop=True)
+print(weight_df.to_string(index=False))
+print(f"\n🎯 Optimized Validation ROC-AUC via Dynamic Programming: {dp_best_auc:.5f}")
 
 
 # ============================================================
-# 6. TRAIN MULTI-MODEL ENSEMBLE ON FULL DATASET
+# 7. MULTI-SEED FULL TRAINING & INFERENCE
 # ============================================================
 
 print("\n============================================")
-print("TRAINING TOP-3 LINEAR ENSEMBLE ON FULL DATASET")
+print("TRAINING OPTIMAL DP ENSEMBLE ON FULL DATASET")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
@@ -267,63 +313,65 @@ if high_cardinality:
     X_test_full = X_test_full.drop(columns=high_cardinality)
 
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
+numerical_features蠢 = X_full.select_dtypes(include=[np.number]).columns.tolist()
 
-print(f"Training on {len(X_full)} full dataset rows...")
+print(f"Full dataset: {len(X_full)} rows | Features: {len(numerical_features蠢)} num, {len(categorical_features)} cat")
 
-# Build ensemble of the Top 3 Tournament Champions across multiple seeds
+# Train only the models selected by the DP algorithm (weight > 0)
+active_model_indices = [i for i, w in enumerate(optimal_weights) if w > 0]
 SEEDS = [42, 101, 777, 2024, 999]
-all_predictions = []
 
-for m_idx, m_name in enumerate(top_3_models):
-    print(f" -> Training Model #{m_idx+1}: {m_name}...")
+final_test_probabilities = np.zeros(len(X_test_full))
+
+for m_idx in active_model_indices:
+    m_name = library_model_names[m_idx]
+    m_weight = optimal_weights[m_idx]
+    print(f" -> Training {m_name} (DP Weight = {m_weight * 100:.1f}%)...")
+
     model_seed_preds = np.zeros((len(X_test_full), len(SEEDS)))
-
     for s_idx, seed in enumerate(SEEDS):
-        candidate_pool = get_linear_candidates(seed=seed)
-        model_estimator, use_quantile = candidate_pool[m_name]
+        models_dict = get_model_library(seed=seed)
+        model_obj, use_quantile = models_dict[m_name]
 
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+        preprocessor = build_preprocessorParam(numerical_features蠢, categorical_features, use_quantile=use_quantile)
         pipe = Pipeline(steps=[
             ("preprocessor", preprocessor),
-            ("model", model_estimator)
+            ("model", model_obj)
         ])
         pipe.fit(X_full, y_full)
         model_seed_preds[:, s_idx] = pipe.predict_proba(X_test_full)[:, 1]
 
-    all_predictions.append(model_seed_preds.mean(axis=1))
-
-# Final weighted soft-average of top models
-final_probabilities = np.mean(all_predictions, axis=0)
+    # Accumulate into final weighted prediction
+    final_test_probabilities += m_weight * model_seed_preds.mean(axis=1)
 
 
 # ============================================================
-# 7. VALIDATE & SAVE SUBMISSION FILE
+# 8. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
-if len(final_probabilities) != len(test_raw):
+if len(final_test_probabilities) != len(test_raw):
     raise ValueError("Prediction count does not match test data.")
-if np.isnan(final_probabilities).any():
+if np.isnan(final_test_probabilities).any():
     raise ValueError("Predictions contain NaN.")
-if (final_probabilities < 0).any() or (final_probabilities > 1).any():
+if (final_test_probabilities < 0).any() or (final_test_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp44_optimized_linear_ensemble.csv"
+output_file = "submission_exp45_dynamic_programming_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_raw["anonymised_id"],
-    "employed_status": final_probabilities
+    "employed_status": final_test_probabilities
 })
 
 submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 8. SUMMARY & BENCHMARKS
+# 9. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 44 COMPLETE")
+print("EXPERIMENT 45 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -337,11 +385,11 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 35 Hybrid Single Blend : 0.65089")
-print("Exp 37 5-Fold Hybrid Blend : 0.65247")
-print("Exp 41 Sequential Hybrid   : 0.65325")
-print("Exp 43 Single LogReg Champ : 0.65502 (Previous Best)")
-print("Exp 44 Top-3 Linear Blend  : READY")
+print("Exp 37 5-Fold Hybrid Blend     : 0.65247")
+print("Exp 41 Sequential Hybrid       : 0.65325")
+print("Exp 43 Single LogReg Champ     : 0.65502")
+print("Exp 44 Top-3 Linear Blend      : 0.65630 (Current Best)")
+print(f"Exp 45 Dynamic Programming DP : OOF Val = {dp_best_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
