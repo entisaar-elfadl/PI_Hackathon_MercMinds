@@ -1,402 +1,733 @@
 # ============================================================
-# EXPERIMENT 46 — THE GRAND MULTILINEAR & GLM TOURNAMENT
-# (ELASTICNET, SPLINE GLMs, ROBUST HUBER, BAYESIAN RIDGE & L2)
+# EXPERIMENT 47 — LIGHTGBM FULL TABULAR MODEL
 # ============================================================
 
-import pandas as pd
-import numpy as np
+import os
+import warnings
 from pathlib import Path
 
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer, SplineTransformer
-from sklearn.linear_model import LogisticRegression, SGDClassifier, RidgeClassifier, BayesianRidge
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import roc_auc_score, accuracy_score
+import numpy as np
+import pandas as pd
+
+from lightgbm import LGBMClassifier, early_stopping, log_evaluation
+
+
+warnings.filterwarnings("ignore")
 
 
 print("============================================")
-print("EXPERIMENT 46")
-print("THE GRAND MULTILINEAR & GLM TOURNAMENT")
+print("EXPERIMENT 47")
+print("LIGHTGBM FULL TABULAR MODEL")
 print("============================================")
 
 
 # ============================================================
-# 1. DIRECTORY PATHS
+# 1. DIRECTORY
 # ============================================================
 
 CURRENT_DIR = Path.cwd()
 
-DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
+DATA_DIR = (
+    CURRENT_DIR / "../../assets/dataset"
+).resolve()
+
 if not DATA_DIR.exists():
+
+    print("\nDataset directory not found at:")
+    print(DATA_DIR)
+
     DATA_DIR = CURRENT_DIR
 
-ROUND_DIR = CURRENT_DIR / "round_testing"
-if not ROUND_DIR.exists():
-    ROUND_DIR = DATA_DIR / "round_testing"
+
+print("\nDataset directory:")
+print(DATA_DIR)
 
 
 # ============================================================
-# 2. DATA CLEANING & TYPE COERCION
+# 2. LOAD DATA
 # ============================================================
 
-target = "employed_status"
-
-def clean_data_and_extract_features(df):
-    """Cleans IDs, dates, and automatically coerces numerical datatypes."""
-    data = df.copy()
-
-    if target in data.columns:
-        data[target] = pd.to_numeric(data[target], errors="coerce")
-        data = data.dropna(subset=[target]).copy()
-        data[target] = data[target].astype(int)
-
-    if "anonymised_id" in data.columns:
-        data = data.drop(columns=["anonymised_id"])
-
-    if "survey_date" in data.columns:
-        data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
-        data["survey_year"] = data["survey_date"].dt.year
-        data["survey_month"] = data["survey_date"].dt.month
-        data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
-        data = data.drop(columns=["survey_date"])
-
-    for col in data.columns:
-        if col != target and data[col].dtype == "object":
-            converted = pd.to_numeric(data[col], errors="coerce")
-            if converted.notna().sum() > 0.6 * data[col].notna().sum():
-                data[col] = converted
-
-    return data
+train_file = DATA_DIR / "train.csv"
+test_file = DATA_DIR / "test.csv"
 
 
-def build_linear_preprocessor(numerical_cols, categorical_cols, transform_type="standard"):
-    """
-    Builds customized preprocessors for multilinear models:
-    - standard: Median Impute + Standard Scale
-    - quantile: Median Impute + Quantile Gaussian Normalization
-    - spline: Median Impute + Spline Expansion (Generalized Additive Model)
-    """
-    transformers = []
+if not train_file.exists():
 
-    if len(numerical_cols) > 0:
-        if transform_type == "quantile":
-            scaler = QuantileTransformer(output_distribution="normal", random_state=42)
-            num_pipe = Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", scaler)])
-        elif transform_type == "spline":
-            num_pipe = Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
-                ("spline", SplineTransformer(n_knots=5, degree=3, include_bias=False)),
-                ("scaler", StandardScaler())
-            ])
-        else:
-            num_pipe = Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())])
+    raise FileNotFoundError(
+        f"Could not find:\n{train_file}"
+    )
 
-        transformers.append(("num", num_pipe, numerical_cols))
 
-    if len(categorical_cols) > 0:
-        cat_pipe = Pipeline([
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-        ])
-        transformers.append(("cat", cat_pipe, categorical_cols))
+if not test_file.exists():
 
-    return ColumnTransformer(transformers=transformers)
+    raise FileNotFoundError(
+        f"Could not find:\n{test_file}"
+    )
+
+
+train_data = pd.read_csv(
+    train_file
+)
+
+test_data = pd.read_csv(
+    test_file
+)
+
+
+print("\n============================================")
+print("DATASET LOADED")
+print("============================================")
+
+print(
+    "Training rows:",
+    len(train_data)
+)
+
+print(
+    "Training columns:",
+    len(train_data.columns)
+)
+
+print(
+    "Testing rows:",
+    len(test_data)
+)
+
+print(
+    "Testing columns:",
+    len(test_data.columns)
+)
 
 
 # ============================================================
-# 3. MULTILINEAR CANDIDATE SUITE
+# 3. TARGET CLEANING
 # ============================================================
 
-# Wrapper for BayesianRidge to provide predict_proba API
-class BayesianRidgeProbabilityWrapper:
-    def __init__(self, alpha_1=1e-6, lambda_1=1e-6):
-        self.model = BayesianRidge(alpha_1=alpha_1, lambda_1=lambda_1)
+TARGET = "employed_status"
 
-    def fit(self, X, y):
-        self.model.fit(X, y)
-        return self
-
-    def predict_proba(self, X):
-        preds = self.model.predict(X)
-        probs_1 = np.clip(preds, 0.01, 0.99)
-        probs_0 = 1.0 - probs_1
-        return np.vstack([probs_0, probs_1]).T
+print("\n============================================")
+print("TARGET CLEANING")
+print("============================================")
 
 
-def get_multilinear_candidates(seed=42):
-    """Returns a rich suite of specialized multilinear and GLM architectures."""
-    return {
-        # 1. Fine-tuned ElasticNet Variants
-        "ElasticNet (C=0.10, L1=0.15)": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
-            "standard"
-        ),
-        "ElasticNet (C=0.08, L1=0.20)": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.20, max_iter=1000, random_state=seed),
-            "standard"
-        ),
-        "ElasticNet (C=0.12, L1=0.10)": (
-            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
-            "standard"
-        ),
+train_data[TARGET] = pd.to_numeric(
+    train_data[TARGET],
+    errors="coerce"
+)
 
-        # 2. L2 Regularized Linear Baselines
-        "Logistic L2 (C=0.08)": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            "standard"
-        ),
-        "Logistic L2 (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            "standard"
-        ),
-        "Logistic L2 (C=0.06)": (
-            LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            "standard"
-        ),
 
-        # 3. Piecewise Spline GLM (Additive Linear Model)
-        "Spline GLM Logistic (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            "spline"
-        ),
+print(
+    "\nOriginal target distribution:"
+)
 
-        # 4. Quantile-Normalized Multilinear
-        "Quantile ElasticNet (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
-            "quantile"
-        ),
-        "Quantile Logistic L2 (C=0.08)": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            "quantile"
-        ),
+print(
+    train_data[TARGET].value_counts(
+        dropna=False
+    )
+)
 
-        # 5. Robust Huber Margin Linear Classifier
-        "Robust Huber Linear (alpha=0.001)": (
-            CalibratedClassifierCV(
-                estimator=SGDClassifier(loss="modified_huber", penalty="elasticnet", l1_ratio=0.15, alpha=0.001, random_state=seed),
-                method="sigmoid", cv=3
-            ),
-            "standard"
-        ),
 
-        # 6. Bayesian Multilinear Regression (MAP)
-        "Bayesian Multilinear Regression": (
-            BayesianRidgeProbabilityWrapper(),
-            "standard"
-        ),
+missing_target = train_data[TARGET].isna().sum()
 
-        # 7. Calibrated Ridge Linear Classifier
-        "Calibrated Ridge (alpha=2.0)": (
-            CalibratedClassifierCV(estimator=RidgeClassifier(alpha=2.0, random_state=seed), method="sigmoid", cv=3),
-            "standard"
+
+print(
+    "\nMissing target values:",
+    missing_target
+)
+
+
+# Remove rows where target is missing
+
+train_data = train_data.dropna(
+    subset=[TARGET]
+).copy()
+
+
+# Force target to exactly 0 / 1
+
+train_data[TARGET] = (
+    train_data[TARGET]
+    .astype(int)
+)
+
+
+# Safety check
+
+unique_target = sorted(
+    train_data[TARGET].unique()
+)
+
+
+print(
+    "\nClean target distribution:"
+)
+
+print(
+    train_data[TARGET].value_counts()
+)
+
+
+print(
+    "\nUnique target values:",
+    unique_target
+)
+
+
+if unique_target != [0, 1]:
+
+    raise ValueError(
+        f"Target is not binary 0/1: {unique_target}"
+    )
+
+
+# ============================================================
+# 4. SEPARATE X / Y
+# ============================================================
+
+y = train_data[TARGET].copy()
+
+X = train_data.drop(
+    columns=[TARGET]
+).copy()
+
+X_test = test_data.copy()
+
+
+# ============================================================
+# 5. REMOVE ID
+# ============================================================
+
+if "anonymised_id" in X.columns:
+
+    X = X.drop(
+        columns=["anonymised_id"]
+    )
+
+
+if "anonymised_id" in X_test.columns:
+
+    X_test = X_test.drop(
+        columns=["anonymised_id"]
+    )
+
+
+# ============================================================
+# 6. DATE FEATURES
+# ============================================================
+
+print("\n============================================")
+print("DATE FEATURES")
+print("============================================")
+
+
+if "survey_date" in X.columns:
+
+    print(
+        "Processing survey_date..."
+    )
+
+
+    X["survey_date"] = pd.to_datetime(
+        X["survey_date"],
+        errors="coerce"
+    )
+
+
+    X_test["survey_date"] = pd.to_datetime(
+        X_test["survey_date"],
+        errors="coerce"
+    )
+
+
+    # Year
+
+    X["survey_year"] = (
+        X["survey_date"].dt.year
+    )
+
+    X_test["survey_year"] = (
+        X_test["survey_date"].dt.year
+    )
+
+
+    # Month
+
+    X["survey_month"] = (
+        X["survey_date"].dt.month
+    )
+
+    X_test["survey_month"] = (
+        X_test["survey_date"].dt.month
+    )
+
+
+    # Day of year
+
+    X["survey_dayofyear"] = (
+        X["survey_date"].dt.dayofyear
+    )
+
+    X_test["survey_dayofyear"] = (
+        X_test["survey_date"].dt.dayofyear
+    )
+
+
+    # Quarter
+
+    X["survey_quarter"] = (
+        X["survey_date"].dt.quarter
+    )
+
+    X_test["survey_quarter"] = (
+        X_test["survey_date"].dt.quarter
+    )
+
+
+    # Drop original date
+
+    X = X.drop(
+        columns=["survey_date"]
+    )
+
+    X_test = X_test.drop(
+        columns=["survey_date"]
+    )
+
+
+# ============================================================
+# 7. MAKE TRAIN / TEST COLUMNS IDENTICAL
+# ============================================================
+
+common_columns = [
+    column
+    for column in X.columns
+    if column in X_test.columns
+]
+
+
+X = X[common_columns].copy()
+
+X_test = X_test[common_columns].copy()
+
+
+print(
+    "\nFeatures:",
+    len(common_columns)
+)
+
+
+# ============================================================
+# 8. CONVERT OBJECT COLUMNS TO CATEGORICAL
+# ============================================================
+
+print("\n============================================")
+print("CATEGORICAL FEATURES")
+print("============================================")
+
+
+categorical_features = []
+
+
+for column in X.columns:
+
+    if (
+        X[column].dtype == "object"
+        or
+        str(X[column].dtype) == "category"
+        or
+        X[column].dtype == "bool"
+    ):
+
+        categorical_features.append(
+            column
         )
-    }
+
+
+print(
+    "Categorical features:",
+    len(categorical_features)
+)
+
+
+for column in categorical_features:
+
+    # Combine train/test categories so
+    # unknown test categories are handled safely.
+
+    combined = pd.concat(
+        [
+            X[column],
+            X_test[column]
+        ],
+        axis=0
+    ).astype("string")
+
+
+    categories = pd.Index(
+        combined.dropna().unique()
+    )
+
+
+    X[column] = pd.Categorical(
+        X[column].astype("string"),
+        categories=categories
+    )
+
+
+    X_test[column] = pd.Categorical(
+        X_test[column].astype("string"),
+        categories=categories
+    )
+
+
+    print(
+        f" - {column}: "
+        f"{len(categories)} categories"
+    )
 
 
 # ============================================================
-# 4. LOAD VALID ROUND DATASETS
+# 9. NUMERICAL FEATURES
 # ============================================================
 
-print("\n============================================")
-print("DISCOVERING SEQUENTIAL ROUND DATASETS")
-print("============================================")
+numerical_features = [
+    column
+    for column in X.columns
+    if column not in categorical_features
+]
 
-round_data_list = []
 
-if ROUND_DIR.exists():
-    round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
-    for r_dir in round_folders:
-        csv_files = list(r_dir.glob("*.csv"))
-        if len(csv_files) >= 2:
-            csv_files = sorted(csv_files, key=lambda f: f.stat().st_size)
-            test_file, train_file = csv_files[0], csv_files[1]
+print("\nNumerical features:")
 
-            r_train_raw = pd.read_csv(train_file)
-            r_test_raw = pd.read_csv(test_file)
+for column in numerical_features:
 
-            if target in r_train_raw.columns and target in r_test_raw.columns:
-                r_train = clean_data_and_extract_features(r_train_raw)
-                r_test = clean_data_and_extract_features(r_test_raw)
-
-                common_features = [c for c in r_train.columns if c in r_test.columns and c != target]
-                if len(common_features) >= 5:
-                    round_data_list.append({
-                        "name": r_dir.name,
-                        "X_train": r_train[common_features],
-                        "y_train": r_train[target],
-                        "X_test": r_test[common_features],
-                        "y_test": r_test[target]
-                    })
-                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train)} | Test: {len(r_test)} | Features: {len(common_features)}")
+    print(
+        " -",
+        column
+    )
 
 
 # ============================================================
-# 5. RUN MULTILINEAR TOURNAMENT ACROSS ROUNDS
-# ============================================================
-
-print("\n============================================")
-print("STARTING MULTILINEAR & GLM TOURNAMENT")
-print("============================================")
-
-candidate_dict = get_multilinear_candidates(seed=42)
-tournament_scores = {name: [] for name in candidate_dict.keys()}
-round_names = []
-
-for r_data in round_data_list:
-    r_name = r_data["name"]
-    round_names.append(r_name.upper())
-    X_tr = r_data["X_train"].copy()
-    y_tr = r_data["y_train"].copy()
-    X_te = r_data["X_test"].copy()
-    y_te = r_data["y_test"].copy()
-
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
-    if high_card:
-        X_tr = X_tr.drop(columns=high_card)
-        X_te = X_te.drop(columns=high_card)
-
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
-
-    models_dict = get_multilinear_candidates(seed=42)
-
-    for model_name, (model_obj, transform_type) in models_dict.items():
-        preprocessor = build_linear_preprocessor(num_cols, cat_cols, transform_type=transform_type)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
-        ])
-        pipe.fit(X_tr, y_tr)
-        probs = pipe.predict_proba(X_te)[:, 1]
-        score = roc_auc_score(y_te, probs)
-        tournament_scores[model_name].append(score)
-
-# Leaderboard Summary
-results_table = []
-for model_name, scores in tournament_scores.items():
-    mean_score = np.mean(scores) if scores else 0.0
-    row = {"Multilinear Architecture": model_name, "Mean Round AUC": mean_score}
-    for i, s in enumerate(scores):
-        row[f"{round_names[i]} AUC"] = s
-    results_table.append(row)
-
-leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
-
-print("\n============================================")
-print("MULTILINEAR TOURNAMENT LEADERBOARD")
-print("============================================")
-print(leaderboard_df.to_string(index=False))
-
-# Select Top 4 Champion Models for Ensembling
-top_4_champions = leaderboard_df.head(4)["Multilinear Architecture"].tolist()
-print(f"\n🏆 TOP 4 MULTILINEAR CHAMPIONS SELECTED: {top_4_champions}")
-
-
-# ============================================================
-# 6. TRAIN MULTI-CHAMPION ENSEMBLE ON FULL DATASET
+# 10. VALIDATE DATA TYPES
 # ============================================================
 
 print("\n============================================")
-print("TRAINING TOP-4 MULTILINEAR ENSEMBLE ON FULL DATASET")
+print("FEATURE SUMMARY")
 print("============================================")
 
-train_raw = pd.read_csv(DATA_DIR / "train.csv")
-test_raw = pd.read_csv(DATA_DIR / "test.csv")
+print(
+    "Total features:",
+    len(X.columns)
+)
 
-train_df = clean_data_and_extract_features(train_raw)
-test_df = clean_data_and_extract_features(test_raw)
+print(
+    "Categorical:",
+    len(categorical_features)
+)
 
-common_cols = [c for c in train_df.columns if c in test_df.columns and c != target]
-
-y_full = train_df[target].reset_index(drop=True)
-X_full = train_df[common_cols].reset_index(drop=True)
-X_test_full = test_df[common_cols].reset_index(drop=True)
-
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
-if high_cardinality:
-    X_full = X_full.drop(columns=high_cardinality)
-    X_test_full = X_test_full.drop(columns=high_cardinality)
-
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
-
-print(f"Training on {len(X_full)} full dataset rows...")
-
-SEEDS = [42, 101, 777, 2024, 999]
-all_champion_predictions = []
-
-for c_idx, c_name in enumerate(top_4_champions):
-    print(f" -> Training Champion #{c_idx+1}: {c_name} across 5 seeds...")
-    model_seed_preds = np.zeros((len(X_test_full), len(SEEDS)))
-
-    for s_idx, seed in enumerate(SEEDS):
-        candidate_pool = get_multilinear_candidates(seed=seed)
-        model_estimator, transform_type = candidate_pool[c_name]
-
-        preprocessor = build_linear_preprocessor(numerical_features, categorical_features, transform_type=transform_type)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_estimator)
-        ])
-        pipe.fit(X_full, y_full)
-        model_seed_preds[:, s_idx] = pipe.predict_proba(X_test_full)[:, 1]
-
-    all_champion_predictions.append(model_seed_preds.mean(axis=1))
-
-# Smooth Soft Average of the Top 4 Multilinear Champions
-final_probabilities = np.mean(all_champion_predictions, axis=0)
+print(
+    "Numerical:",
+    len(numerical_features)
+)
 
 
 # ============================================================
-# 7. VALIDATE & SAVE SUBMISSION FILE
+# 11. TRAIN LIGHTGBM
 # ============================================================
 
-if len(final_probabilities) != len(test_raw):
-    raise ValueError("Prediction count does not match test data.")
-if np.isnan(final_probabilities).any():
-    raise ValueError("Predictions contain NaN.")
-if (final_probabilities < 0).any() or (final_probabilities > 1).any():
-    raise ValueError("Predictions fall outside [0, 1].")
+print("\n============================================")
+print("TRAINING LIGHTGBM")
+print("============================================")
 
-output_file = "submission_exp46_multilinear_tournament_ensemble.csv"
+print(
+    "Training on",
+    len(X),
+    "rows..."
+)
+
+
+model = LGBMClassifier(
+
+    objective="binary",
+
+    # --------------------------------------------------------
+    # Core boosting
+    # --------------------------------------------------------
+
+    n_estimators=2000,
+
+    learning_rate=0.025,
+
+    # --------------------------------------------------------
+    # Tree complexity
+    # --------------------------------------------------------
+
+    num_leaves=31,
+
+    max_depth=-1,
+
+    min_child_samples=30,
+
+    min_split_gain=0.0,
+
+    # --------------------------------------------------------
+    # Regularisation
+    # --------------------------------------------------------
+
+    reg_alpha=0.10,
+
+    reg_lambda=1.00,
+
+    # --------------------------------------------------------
+    # Feature / row sampling
+    # --------------------------------------------------------
+
+    subsample=0.85,
+
+    subsample_freq=1,
+
+    colsample_bytree=0.85,
+
+    # --------------------------------------------------------
+    # Categorical / histogram
+    # --------------------------------------------------------
+
+    max_bin=255,
+
+    # --------------------------------------------------------
+    # Class imbalance
+    #
+    # IMPORTANT:
+    # We deliberately do NOT use class_weight here.
+    # AUC is ranking based and we want probabilities that
+    # preserve the natural target distribution.
+    # --------------------------------------------------------
+
+    class_weight=None,
+
+    # --------------------------------------------------------
+    # Reproducibility
+    # --------------------------------------------------------
+
+    random_state=42,
+
+    n_jobs=-1,
+
+    verbosity=-1
+)
+
+
+# ============================================================
+# 12. FIT
+# ============================================================
+
+model.fit(
+
+    X,
+    y,
+
+    categorical_feature=categorical_features,
+
+    callbacks=[
+        log_evaluation(100)
+    ]
+)
+
+
+print(
+    "\nTraining complete."
+)
+
+
+# ============================================================
+# 13. PREDICT
+# ============================================================
+
+print("\n============================================")
+print("GENERATING PREDICTIONS")
+print("============================================")
+
+
+probabilities = model.predict_proba(
+    X_test
+)[:, 1]
+
+
+# ============================================================
+# 14. VALIDATION
+# ============================================================
+
+if len(probabilities) != len(test_data):
+
+    raise ValueError(
+        "Prediction count does not match test data."
+    )
+
+
+if np.isnan(probabilities).any():
+
+    raise ValueError(
+        "Predictions contain NaN."
+    )
+
+
+if (
+    (probabilities < 0).any()
+    or
+    (probabilities > 1).any()
+):
+
+    raise ValueError(
+        "Predictions outside [0, 1]."
+    )
+
+
+# ============================================================
+# 15. CREATE SUBMISSION
+# ============================================================
 
 submission = pd.DataFrame({
-    "anonymised_id": test_raw["anonymised_id"],
-    "employed_status": final_probabilities
-})
 
-submission.to_csv(output_file, index=False)
+    "anonymised_id":
+        test_data["anonymised_id"],
+
+    "employed_status":
+        probabilities
+
+})
 
 
 # ============================================================
-# 8. SUMMARY & BENCHMARKS
+# 16. SAVE
+# ============================================================
+
+output_file = (
+    "submission_exp47_lightgbm.csv"
+)
+
+
+submission.to_csv(
+    output_file,
+    index=False
+)
+
+
+# ============================================================
+# 17. PREDICTION SUMMARY
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 46 COMPLETE")
+print("EXPERIMENT 47 COMPLETE")
 print("============================================")
-print(f"Saved: {output_file}")
-print(f"Rows: {len(submission)}")
 
-print("\nPrediction summary:")
-print(submission["employed_status"].describe())
 
-print("\nFirst 10 predictions:")
-print(submission.head(10))
+print(
+    "\nSaved:",
+    output_file
+)
+
+
+print(
+    "Rows:",
+    len(submission)
+)
+
+
+print(
+    "Columns:",
+    len(submission.columns)
+)
+
+
+print(
+    "\nPrediction summary:"
+)
+
+
+print(
+    submission[
+        "employed_status"
+    ].describe()
+)
+
+
+print(
+    "\nFirst 10 predictions:"
+)
+
+
+print(
+    submission.head(10)
+)
+
+
+# ============================================================
+# 18. FEATURE IMPORTANCE
+# ============================================================
+
+print("\n============================================")
+print("TOP FEATURE IMPORTANCE")
+print("============================================")
+
+
+importance = pd.DataFrame({
+
+    "feature":
+        X.columns,
+
+    "importance":
+        model.feature_importances_
+
+})
+
+
+importance = importance.sort_values(
+    "importance",
+    ascending=False
+)
+
+
+print(
+    importance.head(20).to_string(
+        index=False
+    )
+)
+
+
+# ============================================================
+# 19. BENCHMARKS
+# ============================================================
 
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 41 Sequential Hybrid      : 0.65325")
-print("Exp 43 Single LogReg Champ    : 0.65502")
-print("Exp 44 Top-3 Linear Blend     : 0.65630 (Current Best)")
-print("Exp 45 Dynamic Programming DP: 0.65613")
-print("Exp 46 Multilinear Tournament : READY")
+
+print(
+    "Exp 41 Sequential Hybrid : 0.65325"
+)
+
+print(
+    "Exp 43 LogReg Champion   : 0.65502"
+)
+
+print(
+    "Exp 44 Top-3 Linear      : 0.65630"
+)
+
+print(
+    "Exp 45 Dynamic Programming: 0.65613"
+)
+
+print(
+    "Exp 46 Multilinear       : 0.65701"
+)
+
+print(
+    "Exp 47 LightGBM          : PENDING"
+)
+
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
 print("============================================")
+
