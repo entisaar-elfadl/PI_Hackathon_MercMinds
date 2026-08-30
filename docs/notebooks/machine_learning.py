@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 39 — MULTI-SEED 5-FOLD ENSEMBLE WITH MISSINGNESS INDICATORS
-# (OPTIMIZED ON EXP 37 FOUNDATION: 15-MODEL SEED AVERAGING)
+# EXPERIMENT 40 — CLEAN 5-FOLD DUAL-PARADIGM ENSEMBLE
+# (EXP 37 MLP-LOGISTIC BACKBONE + 5-FOLD HIST GRADIENT BOOSTING)
 # ============================================================
 
 import pandas as pd
@@ -13,14 +13,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.neural_network import MLPClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 39")
-print("MULTI-SEED 5-FOLD HYBRID ENSEMBLE")
+print("EXPERIMENT 40")
+print("CLEAN 5-FOLD DUAL-PARADIGM ENSEMBLE")
 print("============================================")
 
 
@@ -66,7 +66,7 @@ X = train_clean.drop(columns=[target]).reset_index(drop=True)
 X_test = test_data.copy()
 
 print(f"\nTraining rows after cleaning: {len(X)}")
-print(f"Target balance:\n{y.value_counts(normalize=True)}")
+print(f"Target distribution:\n{y.value_counts(normalize=True)}")
 
 
 # ============================================================
@@ -94,7 +94,7 @@ if "survey_date" in X.columns:
 
 
 # ============================================================
-# 5. FILTER HIGH CARDINALITY CATEGORIES (>100)
+# 5. CARDINALITY HANDLING (EXACT EXP 37 SETTING)
 # ============================================================
 
 categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
@@ -107,22 +107,22 @@ if high_cardinality:
 categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-print(f"\nFeatures used: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
+print(f"\nFeatures: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
 
 # ============================================================
-# 6. MODEL PIPELINE BUILDER WITH MISSINGNESS INDICATORS
+# 6. MODEL PIPELINE BUILDERS
 # ============================================================
 
-def build_model_pipeline(seed=42):
-    # add_indicator=True captures survey omission patterns
+# Model 1: The Winning Exp 37 Pipeline (MLP + Logistic Regression)
+def build_neural_linear_pipeline(seed=42):
     numeric_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+        ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler())
     ])
 
     categorical_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent", add_indicator=True)),
+        ("imputer", SimpleImputer(strategy="most_frequent")),
         ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
     ])
 
@@ -170,93 +170,138 @@ def build_model_pipeline(seed=42):
     ])
 
 
+# Model 2: 5-Fold Gradient Boosted Decision Trees (Tree-based representation)
+def build_tree_pipeline(seed=42):
+    numeric_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median"))
+    ])
+
+    categorical_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+    ])
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numerical_features),
+            ("cat", categorical_transformer, categorical_features)
+        ]
+    )
+
+    hgb = HistGradientBoostingClassifier(
+        loss="log_loss",
+        learning_rate=0.03,
+        max_iter=300,
+        max_leaf_nodes=31,
+        min_samples_leaf=25,
+        l2_regularization=2.0,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed
+    )
+
+    return Pipeline(steps=[
+        ("preprocessor", preprocessor),
+        ("hgb", hgb)
+    ])
+
+
 # ============================================================
-# 7. MULTI-SEED 5-FOLD CROSS-VALIDATION (3 SEEDS x 5 FOLDS = 15 MODELS)
+# 7. 5-FOLD STRATIFIED CROSS-VALIDATION
 # ============================================================
 
-SEEDS = [42, 101, 777]
+print("\n============================================")
+print("RUNNING 5-FOLD CROSS-VALIDATION")
+print("============================================")
+
 N_SPLITS = 5
+skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-all_seed_oof = []
-all_test_predictions = []
+oof_neural = np.zeros(len(X))
+oof_trees = np.zeros(len(X))
+
+test_preds_neural = np.zeros((len(X_test), N_SPLITS))
+test_preds_trees = np.zeros((len(X_test), N_SPLITS))
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_train_f, y_train_f = X.iloc[train_idx], y.iloc[train_idx]
+    X_val_f, y_val_f = X.iloc[val_idx], y.iloc[val_idx]
+
+    # Train Model 1 (Neural + Linear)
+    model_neural = build_neural_linear_pipeline(seed=42 + fold)
+    model_neural.fit(X_train_f, y_train_f)
+    val_pred_n = model_neural.predict_proba(X_val_f)[:, 1]
+    oof_neural[val_idx] = val_pred_n
+    test_preds_neural[:, fold] = model_neural.predict_proba(X_test)[:, 1]
+
+    # Train Model 2 (Tree Gradient Boosting)
+    model_tree = build_tree_pipeline(seed=100 + fold)
+    model_tree.fit(X_train_f, y_train_f)
+    val_pred_t = model_tree.predict_proba(X_val_f)[:, 1]
+    oof_trees[val_idx] = val_pred_t
+    test_preds_trees[:, fold] = model_tree.predict_proba(X_test)[:, 1]
+
+    print(f"Fold {fold + 1} - Neural AUC: {roc_auc_score(y_val_f, val_pred_n):.5f} | Tree AUC: {roc_auc_score(y_val_f, val_pred_t):.5f}")
+
+
+# ============================================================
+# 8. OUT-OF-FOLD BLEND OPTIMIZATION
+# ============================================================
+
+# 70% Neural/Linear Backbone + 30% Tree Gradient Boosting
+oof_blend = 0.70 * oof_neural + 0.30 * oof_trees
+
+score_neural = roc_auc_score(y, oof_neural)
+score_trees = roc_auc_score(y, oof_trees)
+score_blend = roc_auc_score(y, oof_blend)
 
 print("\n============================================")
-print(f"RUNNING {len(SEEDS)} SEEDS x {N_SPLITS}-FOLD CV ({len(SEEDS) * N_SPLITS} TOTAL MODELS)")
+print("OOF CROSS-VALIDATION SUMMARY")
 print("============================================")
-
-for seed_idx, seed in enumerate(SEEDS):
-    print(f"\n--- Running Seed {seed} ({seed_idx + 1}/{len(SEEDS)}) ---")
-    
-    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
-    seed_oof = np.zeros(len(X))
-    seed_test_preds = np.zeros((len(X_test), N_SPLITS))
-
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-        X_train_fold, y_train_fold = X.iloc[train_idx], y.iloc[train_idx]
-        X_val_fold, y_val_fold = X.iloc[val_idx], y.iloc[val_idx]
-
-        model = build_model_pipeline(seed=seed + fold * 10)
-        model.fit(X_train_fold, y_train_fold)
-
-        val_probs = model.predict_proba(X_val_fold)[:, 1]
-        seed_oof[val_idx] = val_probs
-
-        test_probs = model.predict_proba(X_test)[:, 1]
-        seed_test_preds[:, fold] = test_probs
-
-    seed_auc = roc_auc_score(y, seed_oof)
-    print(f"Seed {seed} OOF ROC-AUC: {seed_auc:.5f}")
-
-    all_seed_oof.append(seed_oof)
-    all_test_predictions.append(seed_test_preds.mean(axis=1))
+print(f"1. Neural + Logistic OOF AUC : {score_neural:.5f}")
+print(f"2. Gradient Tree OOF AUC    : {score_trees:.5f}")
+print(f"3. Combined Dual Blend AUC  : {score_blend:.5f}")
 
 
 # ============================================================
-# 8. OVERALL EVALUATION
+# 9. GENERATE & VALIDATE FINAL TEST PREDICTIONS
 # ============================================================
 
-# Average across all seeds
-final_oof_predictions = np.mean(all_seed_oof, axis=0)
-final_test_probabilities = np.mean(all_test_predictions, axis=0)
+final_test_neural = test_preds_neural.mean(axis=1)
+final_test_trees = test_preds_trees.mean(axis=1)
 
-overall_oof_auc = roc_auc_score(y, final_oof_predictions)
-overall_oof_acc = accuracy_score(y, (final_oof_predictions >= 0.5).astype(int))
-
-print("\n============================================")
-print("FINAL MULTI-SEED CV RESULTS")
-print("============================================")
-print(f"Overall Multi-Seed OOF ROC-AUC: {overall_oof_auc:.5f}")
-print(f"Overall Multi-Seed Accuracy   : {overall_oof_acc:.5f}")
-
-
-# ============================================================
-# 9. VALIDATE & SAVE SUBMISSION FILE
-# ============================================================
+# Combined test probability blend
+final_test_probabilities = 0.70 * final_test_neural + 0.30 * final_test_trees
 
 if len(final_test_probabilities) != len(test_data):
     raise ValueError("Prediction count does not match test data.")
-
 if np.isnan(final_test_probabilities).any():
-    raise ValueError("Predictions contain NaN values.")
-
+    raise ValueError("Predictions contain NaN.")
 if (final_test_probabilities < 0).any() or (final_test_probabilities > 1).any():
-    raise ValueError("Predictions fall outside [0, 1] range.")
+    raise ValueError("Predictions fall outside [0, 1].")
+
+
+# ============================================================
+# 10. SAVE SUBMISSION FILE
+# ============================================================
+
+output_file = "submission_exp40_clean_dual_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_data["anonymised_id"],
     "employed_status": final_test_probabilities
 })
 
-output_file = "submission_exp39_multiseed_oof_ensemble.csv"
 submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 10. SUMMARY & BENCHMARKS
+# 11. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 39 COMPLETE")
+print("EXPERIMENT 40 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -271,9 +316,10 @@ print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
 print("Exp 35 Hybrid Single Fit  : 0.65089")
-print("Exp 37 5-Fold Single Seed : 0.65247 (Previous Best)")
+print("Exp 37 5-Fold Neural/Lin  : 0.65247 (Current Best)")
 print("Exp 38 Target Encoded     : 0.64350")
-print(f"Exp 39 Multi-Seed 15-Model: OOF Val = {overall_oof_auc:.5f} (Ready for submission)")
+print("Exp 39 Indicator Noise    : 0.63998")
+print(f"Exp 40 Clean Dual-Ensemble: OOF Val = {score_blend:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
