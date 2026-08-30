@@ -1,23 +1,22 @@
+
 # ============================================================
-# EXPERIMENT 47 — LIGHTGBM FULL TABULAR MODEL
+# EXPERIMENT 48 — XGBOOST ENGINEERED TABULAR MODEL
 # ============================================================
 
-import os
 import warnings
-from pathlib import Path
+warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
 
-from lightgbm import LGBMClassifier, early_stopping, log_evaluation
+from pathlib import Path
 
-
-warnings.filterwarnings("ignore")
+from xgboost import XGBClassifier
 
 
 print("============================================")
-print("EXPERIMENT 47")
-print("LIGHTGBM FULL TABULAR MODEL")
+print("EXPERIMENT 48")
+print("XGBOOST ENGINEERED TABULAR MODEL")
 print("============================================")
 
 
@@ -32,10 +31,6 @@ DATA_DIR = (
 ).resolve()
 
 if not DATA_DIR.exists():
-
-    print("\nDataset directory not found at:")
-    print(DATA_DIR)
-
     DATA_DIR = CURRENT_DIR
 
 
@@ -52,26 +47,19 @@ test_file = DATA_DIR / "test.csv"
 
 
 if not train_file.exists():
-
     raise FileNotFoundError(
-        f"Could not find:\n{train_file}"
+        f"Training file not found:\n{train_file}"
     )
 
 
 if not test_file.exists():
-
     raise FileNotFoundError(
-        f"Could not find:\n{test_file}"
+        f"Testing file not found:\n{test_file}"
     )
 
 
-train_data = pd.read_csv(
-    train_file
-)
-
-test_data = pd.read_csv(
-    test_file
-)
+train = pd.read_csv(train_file)
+test = pd.read_csv(test_file)
 
 
 print("\n============================================")
@@ -80,22 +68,22 @@ print("============================================")
 
 print(
     "Training rows:",
-    len(train_data)
+    len(train)
 )
 
 print(
     "Training columns:",
-    len(train_data.columns)
+    len(train.columns)
 )
 
 print(
     "Testing rows:",
-    len(test_data)
+    len(test)
 )
 
 print(
     "Testing columns:",
-    len(test_data.columns)
+    len(test.columns)
 )
 
 
@@ -105,29 +93,14 @@ print(
 
 TARGET = "employed_status"
 
-print("\n============================================")
-print("TARGET CLEANING")
-print("============================================")
 
-
-train_data[TARGET] = pd.to_numeric(
-    train_data[TARGET],
+train[TARGET] = pd.to_numeric(
+    train[TARGET],
     errors="coerce"
 )
 
 
-print(
-    "\nOriginal target distribution:"
-)
-
-print(
-    train_data[TARGET].value_counts(
-        dropna=False
-    )
-)
-
-
-missing_target = train_data[TARGET].isna().sum()
+missing_target = train[TARGET].isna().sum()
 
 
 print(
@@ -136,17 +109,15 @@ print(
 )
 
 
-# Remove rows where target is missing
-
-train_data = train_data.dropna(
+train = train.dropna(
     subset=[TARGET]
 ).copy()
 
 
-# Force target to exactly 0 / 1
+# FORCE TARGET TO 0 / 1
 
-train_data[TARGET] = (
-    train_data[TARGET]
+train[TARGET] = (
+    train[TARGET]
     .astype(int)
 )
 
@@ -154,21 +125,12 @@ train_data[TARGET] = (
 # Safety check
 
 unique_target = sorted(
-    train_data[TARGET].unique()
+    train[TARGET].unique()
 )
 
 
 print(
-    "\nClean target distribution:"
-)
-
-print(
-    train_data[TARGET].value_counts()
-)
-
-
-print(
-    "\nUnique target values:",
+    "\nClean target values:",
     unique_target
 )
 
@@ -176,26 +138,23 @@ print(
 if unique_target != [0, 1]:
 
     raise ValueError(
-        f"Target is not binary 0/1: {unique_target}"
+        f"Target is not exactly 0/1: {unique_target}"
     )
 
 
+y = train[TARGET].copy()
+
+
 # ============================================================
-# 4. SEPARATE X / Y
+# 4. REMOVE TARGET / ID
 # ============================================================
 
-y = train_data[TARGET].copy()
-
-X = train_data.drop(
+X = train.drop(
     columns=[TARGET]
 ).copy()
 
-X_test = test_data.copy()
+X_test = test.copy()
 
-
-# ============================================================
-# 5. REMOVE ID
-# ============================================================
 
 if "anonymised_id" in X.columns:
 
@@ -212,78 +171,75 @@ if "anonymised_id" in X_test.columns:
 
 
 # ============================================================
-# 6. DATE FEATURES
+# 5. DATE FEATURES
 # ============================================================
 
 print("\n============================================")
-print("DATE FEATURES")
+print("DATE ENGINEERING")
 print("============================================")
 
 
 if "survey_date" in X.columns:
 
-    print(
-        "Processing survey_date..."
-    )
-
-
-    X["survey_date"] = pd.to_datetime(
+    train_date = pd.to_datetime(
         X["survey_date"],
         errors="coerce"
     )
 
-
-    X_test["survey_date"] = pd.to_datetime(
+    test_date = pd.to_datetime(
         X_test["survey_date"],
         errors="coerce"
     )
 
 
-    # Year
+    # Basic date components
 
     X["survey_year"] = (
-        X["survey_date"].dt.year
+        train_date.dt.year
     )
 
     X_test["survey_year"] = (
-        X_test["survey_date"].dt.year
+        test_date.dt.year
     )
 
 
-    # Month
-
     X["survey_month"] = (
-        X["survey_date"].dt.month
+        train_date.dt.month
     )
 
     X_test["survey_month"] = (
-        X_test["survey_date"].dt.month
+        test_date.dt.month
     )
 
-
-    # Day of year
-
-    X["survey_dayofyear"] = (
-        X["survey_date"].dt.dayofyear
-    )
-
-    X_test["survey_dayofyear"] = (
-        X_test["survey_date"].dt.dayofyear
-    )
-
-
-    # Quarter
 
     X["survey_quarter"] = (
-        X["survey_date"].dt.quarter
+        train_date.dt.quarter
     )
 
     X_test["survey_quarter"] = (
-        X_test["survey_date"].dt.quarter
+        test_date.dt.quarter
     )
 
 
-    # Drop original date
+    X["survey_dayofyear"] = (
+        train_date.dt.dayofyear
+    )
+
+    X_test["survey_dayofyear"] = (
+        test_date.dt.dayofyear
+    )
+
+
+    X["survey_week"] = (
+        train_date.dt.isocalendar().week
+        .astype(float)
+    )
+
+    X_test["survey_week"] = (
+        test_date.dt.isocalendar().week
+        .astype(float)
+    )
+
 
     X = X.drop(
         columns=["survey_date"]
@@ -294,14 +250,19 @@ if "survey_date" in X.columns:
     )
 
 
+    print(
+        "Created date features."
+    )
+
+
 # ============================================================
-# 7. MAKE TRAIN / TEST COLUMNS IDENTICAL
+# 6. ALIGN COLUMNS
 # ============================================================
 
 common_columns = [
-    column
-    for column in X.columns
-    if column in X_test.columns
+    c
+    for c in X.columns
+    if c in X_test.columns
 ]
 
 
@@ -310,109 +271,32 @@ X = X[common_columns].copy()
 X_test = X_test[common_columns].copy()
 
 
-print(
-    "\nFeatures:",
-    len(common_columns)
+# ============================================================
+# 7. IDENTIFY CATEGORICAL FEATURES
+# ============================================================
+
+categorical_columns = (
+    X.select_dtypes(
+        include=[
+            "object",
+            "category",
+            "bool"
+        ]
+    ).columns.tolist()
 )
 
 
-# ============================================================
-# 8. CONVERT OBJECT COLUMNS TO CATEGORICAL
-# ============================================================
-
-print("\n============================================")
-print("CATEGORICAL FEATURES")
-print("============================================")
-
-
-categorical_features = []
-
-
-for column in X.columns:
-
-    if (
-        X[column].dtype == "object"
-        or
-        str(X[column].dtype) == "category"
-        or
-        X[column].dtype == "bool"
-    ):
-
-        categorical_features.append(
-            column
-        )
-
-
-print(
-    "Categorical features:",
-    len(categorical_features)
+numerical_columns = (
+    X.select_dtypes(
+        include=[
+            np.number
+        ]
+    ).columns.tolist()
 )
 
 
-for column in categorical_features:
-
-    # Combine train/test categories so
-    # unknown test categories are handled safely.
-
-    combined = pd.concat(
-        [
-            X[column],
-            X_test[column]
-        ],
-        axis=0
-    ).astype("string")
-
-
-    categories = pd.Index(
-        combined.dropna().unique()
-    )
-
-
-    X[column] = pd.Categorical(
-        X[column].astype("string"),
-        categories=categories
-    )
-
-
-    X_test[column] = pd.Categorical(
-        X_test[column].astype("string"),
-        categories=categories
-    )
-
-
-    print(
-        f" - {column}: "
-        f"{len(categories)} categories"
-    )
-
-
-# ============================================================
-# 9. NUMERICAL FEATURES
-# ============================================================
-
-numerical_features = [
-    column
-    for column in X.columns
-    if column not in categorical_features
-]
-
-
-print("\nNumerical features:")
-
-for column in numerical_features:
-
-    print(
-        " -",
-        column
-    )
-
-
-# ============================================================
-# 10. VALIDATE DATA TYPES
-# ============================================================
-
 print("\n============================================")
-print("FEATURE SUMMARY")
+print("FEATURE INFORMATION")
 print("============================================")
 
 print(
@@ -422,22 +306,449 @@ print(
 
 print(
     "Categorical:",
-    len(categorical_features)
+    len(categorical_columns)
 )
 
 print(
     "Numerical:",
-    len(numerical_features)
+    len(numerical_columns)
 )
 
 
 # ============================================================
-# 11. TRAIN LIGHTGBM
+# 8. FREQUENCY ENCODING
 # ============================================================
 
 print("\n============================================")
-print("TRAINING LIGHTGBM")
+print("FREQUENCY ENCODING")
 print("============================================")
+
+
+for column in categorical_columns:
+
+    # Convert to string while preserving missing values
+
+    train_values = (
+        X[column]
+        .fillna("__MISSING__")
+        .astype(str)
+    )
+
+    test_values = (
+        X_test[column]
+        .fillna("__MISSING__")
+        .astype(str)
+    )
+
+
+    # Frequency calculated ONLY from training data
+
+    frequencies = (
+        train_values
+        .value_counts(
+            normalize=True
+        )
+    )
+
+
+    # New frequency feature
+
+    X[column + "_frequency"] = (
+        train_values.map(
+            frequencies
+        ).fillna(0)
+    )
+
+
+    X_test[column + "_frequency"] = (
+        test_values.map(
+            frequencies
+        ).fillna(0)
+    )
+
+
+    print(
+        f" - {column}: "
+        f"{train_values.nunique()} categories"
+    )
+
+
+# ============================================================
+# 9. DROP ORIGINAL CATEGORICAL COLUMNS
+# ============================================================
+
+X = X.drop(
+    columns=categorical_columns
+)
+
+X_test = X_test.drop(
+    columns=categorical_columns
+)
+
+
+# ============================================================
+# 10. NUMERIC CONVERSION
+# ============================================================
+
+for column in X.columns:
+
+    X[column] = pd.to_numeric(
+        X[column],
+        errors="coerce"
+    )
+
+
+for column in X_test.columns:
+
+    X_test[column] = pd.to_numeric(
+        X_test[column],
+        errors="coerce"
+    )
+
+
+# ============================================================
+# 11. ENGINEERED FEATURES
+# ============================================================
+
+print("\n============================================")
+print("ENGINEERING INTERACTION FEATURES")
+print("============================================")
+
+
+def safe_ratio(
+    df,
+    numerator,
+    denominator,
+    output
+):
+
+    if (
+        numerator in df.columns
+        and
+        denominator in df.columns
+    ):
+
+        denominator_values = (
+            df[denominator]
+            .replace(0, np.nan)
+        )
+
+        df[output] = (
+            df[numerator]
+            /
+            denominator_values
+        )
+
+
+def safe_product(
+    df,
+    column_a,
+    column_b,
+    output
+):
+
+    if (
+        column_a in df.columns
+        and
+        column_b in df.columns
+    ):
+
+        df[output] = (
+            df[column_a]
+            *
+            df[column_b]
+        )
+
+
+def safe_difference(
+    df,
+    column_a,
+    column_b,
+    output
+):
+
+    if (
+        column_a in df.columns
+        and
+        column_b in df.columns
+    ):
+
+        df[output] = (
+            df[column_a]
+            -
+            df[column_b]
+        )
+
+
+# ------------------------------------------------------------
+# ROUND FEATURES
+# ------------------------------------------------------------
+
+safe_difference(
+    X,
+    "current_round",
+    "lag_round",
+    "round_progress"
+)
+
+safe_difference(
+    X_test,
+    "current_round",
+    "lag_round",
+    "round_progress"
+)
+
+
+# ------------------------------------------------------------
+# AGE / TENURE
+# ------------------------------------------------------------
+
+safe_ratio(
+    X,
+    "tenure_lag",
+    "age",
+    "tenure_age_ratio"
+)
+
+safe_ratio(
+    X_test,
+    "tenure_lag",
+    "age",
+    "tenure_age_ratio"
+)
+
+
+safe_product(
+    X,
+    "age",
+    "work_readiness_score",
+    "age_readiness_interaction"
+)
+
+safe_product(
+    X_test,
+    "age",
+    "work_readiness_score",
+    "age_readiness_interaction"
+)
+
+
+# ------------------------------------------------------------
+# EMPLOYMENT / HISTORY
+# ------------------------------------------------------------
+
+safe_product(
+    X,
+    "employed_lag",
+    "total_historical_rounds",
+    "employment_history_strength"
+)
+
+safe_product(
+    X_test,
+    "employed_lag",
+    "total_historical_rounds",
+    "employment_history_strength"
+)
+
+
+safe_ratio(
+    X,
+    "employed_lag",
+    "total_historical_rounds",
+    "historical_employment_ratio"
+)
+
+safe_ratio(
+    X_test,
+    "employed_lag",
+    "total_historical_rounds",
+    "historical_employment_ratio"
+)
+
+
+# ------------------------------------------------------------
+# WORK READINESS / EDUCATION
+# ------------------------------------------------------------
+
+safe_product(
+    X,
+    "work_readiness_score",
+    "education_schooling_grade_twelve_equiv",
+    "readiness_education_interaction"
+)
+
+safe_product(
+    X_test,
+    "work_readiness_score",
+    "education_schooling_grade_twelve_equiv",
+    "readiness_education_interaction"
+)
+
+
+# ------------------------------------------------------------
+# WORK READINESS / AGE
+# ------------------------------------------------------------
+
+safe_ratio(
+    X,
+    "work_readiness_score",
+    "age",
+    "readiness_age_ratio"
+)
+
+safe_ratio(
+    X_test,
+    "work_readiness_score",
+    "age",
+    "readiness_age_ratio"
+)
+
+
+# ------------------------------------------------------------
+# TENURE / HISTORICAL ROUNDS
+# ------------------------------------------------------------
+
+safe_ratio(
+    X,
+    "tenure_lag",
+    "total_historical_rounds",
+    "tenure_history_ratio"
+)
+
+safe_ratio(
+    X_test,
+    "tenure_lag",
+    "total_historical_rounds",
+    "tenure_history_ratio"
+)
+
+
+# ============================================================
+# 12. HANDLE INFINITIES
+# ============================================================
+
+X = X.replace(
+    [np.inf, -np.inf],
+    np.nan
+)
+
+X_test = X_test.replace(
+    [np.inf, -np.inf],
+    np.nan
+)
+
+
+# ============================================================
+# 13. ALIGN FINAL FEATURES
+# ============================================================
+
+X_test = X_test.reindex(
+    columns=X.columns
+)
+
+
+print(
+    "\nFinal feature count:",
+    len(X.columns)
+)
+
+
+# ============================================================
+# 14. MISSING VALUES
+# ============================================================
+
+print(
+    "\nTotal missing training values:",
+    X.isna().sum().sum()
+)
+
+print(
+    "Total missing testing values:",
+    X_test.isna().sum().sum()
+)
+
+
+# XGBoost handles NaN values natively.
+# No imputation is required.
+
+
+# ============================================================
+# 15. XGBOOST MODEL
+# ============================================================
+
+print("\n============================================")
+print("TRAINING XGBOOST")
+print("============================================")
+
+
+model = XGBClassifier(
+
+    objective="binary:logistic",
+
+    eval_metric="auc",
+
+    # --------------------------------------------------------
+    # BOOSTING
+    # --------------------------------------------------------
+
+    n_estimators=1500,
+
+    learning_rate=0.025,
+
+    # --------------------------------------------------------
+    # TREE STRUCTURE
+    # --------------------------------------------------------
+
+    max_depth=5,
+
+    min_child_weight=5,
+
+    gamma=0.05,
+
+    # --------------------------------------------------------
+    # SAMPLING
+    # --------------------------------------------------------
+
+    subsample=0.85,
+
+    colsample_bytree=0.80,
+
+    # --------------------------------------------------------
+    # REGULARISATION
+    # --------------------------------------------------------
+
+    reg_alpha=0.10,
+
+    reg_lambda=2.0,
+
+    # --------------------------------------------------------
+    # IMBALANCE
+    # --------------------------------------------------------
+
+    scale_pos_weight=1.0,
+
+    # --------------------------------------------------------
+    # HISTOGRAM TREE METHOD
+    # --------------------------------------------------------
+
+    tree_method="hist",
+
+    # --------------------------------------------------------
+    # RANDOMNESS
+    # --------------------------------------------------------
+
+    random_state=42,
+
+    # --------------------------------------------------------
+    # PERFORMANCE
+    # --------------------------------------------------------
+
+    n_jobs=-1,
+
+    verbosity=0
+)
+
 
 print(
     "Training on",
@@ -446,91 +757,9 @@ print(
 )
 
 
-model = LGBMClassifier(
-
-    objective="binary",
-
-    # --------------------------------------------------------
-    # Core boosting
-    # --------------------------------------------------------
-
-    n_estimators=2000,
-
-    learning_rate=0.025,
-
-    # --------------------------------------------------------
-    # Tree complexity
-    # --------------------------------------------------------
-
-    num_leaves=31,
-
-    max_depth=-1,
-
-    min_child_samples=30,
-
-    min_split_gain=0.0,
-
-    # --------------------------------------------------------
-    # Regularisation
-    # --------------------------------------------------------
-
-    reg_alpha=0.10,
-
-    reg_lambda=1.00,
-
-    # --------------------------------------------------------
-    # Feature / row sampling
-    # --------------------------------------------------------
-
-    subsample=0.85,
-
-    subsample_freq=1,
-
-    colsample_bytree=0.85,
-
-    # --------------------------------------------------------
-    # Categorical / histogram
-    # --------------------------------------------------------
-
-    max_bin=255,
-
-    # --------------------------------------------------------
-    # Class imbalance
-    #
-    # IMPORTANT:
-    # We deliberately do NOT use class_weight here.
-    # AUC is ranking based and we want probabilities that
-    # preserve the natural target distribution.
-    # --------------------------------------------------------
-
-    class_weight=None,
-
-    # --------------------------------------------------------
-    # Reproducibility
-    # --------------------------------------------------------
-
-    random_state=42,
-
-    n_jobs=-1,
-
-    verbosity=-1
-)
-
-
-# ============================================================
-# 12. FIT
-# ============================================================
-
 model.fit(
-
     X,
-    y,
-
-    categorical_feature=categorical_features,
-
-    callbacks=[
-        log_evaluation(100)
-    ]
+    y
 )
 
 
@@ -540,7 +769,7 @@ print(
 
 
 # ============================================================
-# 13. PREDICT
+# 16. PREDICTIONS
 # ============================================================
 
 print("\n============================================")
@@ -554,13 +783,13 @@ probabilities = model.predict_proba(
 
 
 # ============================================================
-# 14. VALIDATION
+# 17. VALIDATION
 # ============================================================
 
-if len(probabilities) != len(test_data):
+if len(probabilities) != len(test):
 
     raise ValueError(
-        "Prediction count does not match test data."
+        "Prediction count does not match test rows."
     )
 
 
@@ -578,18 +807,18 @@ if (
 ):
 
     raise ValueError(
-        "Predictions outside [0, 1]."
+        "Predictions outside [0,1]."
     )
 
 
 # ============================================================
-# 15. CREATE SUBMISSION
+# 18. SUBMISSION
 # ============================================================
 
 submission = pd.DataFrame({
 
     "anonymised_id":
-        test_data["anonymised_id"],
+        test["anonymised_id"],
 
     "employed_status":
         probabilities
@@ -597,12 +826,8 @@ submission = pd.DataFrame({
 })
 
 
-# ============================================================
-# 16. SAVE
-# ============================================================
-
 output_file = (
-    "submission_exp47_lightgbm.csv"
+    "submission_exp48_xgboost_engineered.csv"
 )
 
 
@@ -613,11 +838,32 @@ submission.to_csv(
 
 
 # ============================================================
-# 17. PREDICTION SUMMARY
+# 19. FEATURE IMPORTANCE
+# ============================================================
+
+importance = pd.DataFrame({
+
+    "feature":
+        X.columns,
+
+    "importance":
+        model.feature_importances_
+
+})
+
+
+importance = importance.sort_values(
+    "importance",
+    ascending=False
+)
+
+
+# ============================================================
+# 20. SUMMARY
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 47 COMPLETE")
+print("EXPERIMENT 48 COMPLETE")
 print("============================================")
 
 
@@ -630,12 +876,6 @@ print(
 print(
     "Rows:",
     len(submission)
-)
-
-
-print(
-    "Columns:",
-    len(submission.columns)
 )
 
 
@@ -662,29 +902,12 @@ print(
 
 
 # ============================================================
-# 18. FEATURE IMPORTANCE
+# 21. TOP FEATURES
 # ============================================================
 
 print("\n============================================")
-print("TOP FEATURE IMPORTANCE")
+print("TOP 20 FEATURES")
 print("============================================")
-
-
-importance = pd.DataFrame({
-
-    "feature":
-        X.columns,
-
-    "importance":
-        model.feature_importances_
-
-})
-
-
-importance = importance.sort_values(
-    "importance",
-    ascending=False
-)
 
 
 print(
@@ -695,7 +918,7 @@ print(
 
 
 # ============================================================
-# 19. BENCHMARKS
+# 22. BENCHMARKS
 # ============================================================
 
 print("\n============================================")
@@ -723,11 +946,14 @@ print(
 )
 
 print(
-    "Exp 47 LightGBM          : PENDING"
+    "Exp 47 LightGBM          : 0.59252"
+)
+
+print(
+    "Exp 48 XGBoost           : PENDING"
 )
 
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
 print("============================================")
-
