@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 41 — SEQUENTIAL ROUND-TESTING & TEMPORAL ENSEMBLE
-# (EXPANDING WINDOW BACKTESTING ACROSS ROUNDS 6, 7, 8)
+# EXPERIMENT 42 — 21-MODEL MULTI-ARCHITECTURE NEURAL COMMITTEE
+# (3 DIVERSE MLP ARCHITECTURES + DUAL REGULARIZED LINEAR ANCHORS)
 # ============================================================
 
 import pandas as pd
@@ -18,8 +18,8 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 41")
-print("SEQUENTIAL ROUND-TESTING & TEMPORAL ENSEMBLE")
+print("EXPERIMENT 42")
+print("21-MODEL MULTI-ARCHITECTURE NEURAL COMMITTEE")
 print("============================================")
 
 
@@ -29,19 +29,17 @@ print("============================================")
 
 CURRENT_DIR = Path.cwd()
 
-# 1. Main assets dataset directory
 DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
-# 2. Sequential round testing directory
 ROUND_DIR = CURRENT_DIR / "round_testing"
 if not ROUND_DIR.exists():
     ROUND_DIR = DATA_DIR / "round_testing"
 
 
 # ============================================================
-# 2. FEATURE PIPELINE & MODEL FACTORY
+# 2. FEATURE PIPELINE BUILDERS
 # ============================================================
 
 target = "employed_status"
@@ -50,17 +48,14 @@ def clean_data_and_extract_features(df):
     """Applies clean date extraction and ID handling."""
     data = df.copy()
 
-    # Clean target if present
     if target in data.columns:
         data[target] = pd.to_numeric(data[target], errors="coerce")
         data = data.dropna(subset=[target]).copy()
         data[target] = data[target].astype(int)
 
-    # Drop ID
     if "anonymised_id" in data.columns:
         data = data.drop(columns=["anonymised_id"])
 
-    # Date feature engineering
     if "survey_date" in data.columns:
         data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
         data["survey_year"] = data["survey_date"].dt.year
@@ -71,8 +66,8 @@ def clean_data_and_extract_features(df):
     return data
 
 
-def create_pipeline(numerical_cols, categorical_cols, seed=42):
-    """Builds the high-performing Exp 37 Neural-Linear hybrid pipeline."""
+def create_committee_pipeline(numerical_cols, categorical_cols, seed=42):
+    """Builds a multi-architecture committee of 3 MLPs + 2 Logistic Regressors."""
     numeric_transformer = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="median")),
         ("scaler", StandardScaler())
@@ -90,7 +85,8 @@ def create_pipeline(numerical_cols, categorical_cols, seed=42):
         ]
     )
 
-    mlp = MLPClassifier(
+    # Architecture A: Proven Medium 2-Layer MLP
+    mlp_medium = MLPClassifier(
         hidden_layer_sizes=(64, 32),
         activation="relu",
         solver="adam",
@@ -104,7 +100,38 @@ def create_pipeline(numerical_cols, categorical_cols, seed=42):
         random_state=seed
     )
 
-    logistic = LogisticRegression(
+    # Architecture B: Deep 3-Layer MLP
+    mlp_deep = MLPClassifier(
+        hidden_layer_sizes=(128, 64, 32),
+        activation="relu",
+        solver="adam",
+        alpha=0.02,
+        batch_size=128,
+        learning_rate_init=0.001,
+        max_iter=350,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed + 100
+    )
+
+    # Architecture C: Compact Regularized MLP
+    mlp_compact = MLPClassifier(
+        hidden_layer_sizes=(48, 24),
+        activation="relu",
+        solver="adam",
+        alpha=0.005,
+        batch_size=128,
+        learning_rate_init=0.001,
+        max_iter=350,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed + 200
+    )
+
+    # Linear Anchor 1 (C=0.1)
+    lr_1 = LogisticRegression(
         C=0.1,
         penalty="l2",
         solver="lbfgs",
@@ -112,18 +139,30 @@ def create_pipeline(numerical_cols, categorical_cols, seed=42):
         random_state=seed
     )
 
-    ensemble = VotingClassifier(
+    # Linear Anchor 2 (C=0.05, higher regularization)
+    lr_2 = LogisticRegression(
+        C=0.05,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=seed + 50
+    )
+
+    committee = VotingClassifier(
         estimators=[
-            ("mlp", mlp),
-            ("lr", logistic)
+            ("mlp_med", mlp_medium),
+            ("mlp_deep", mlp_deep),
+            ("mlp_comp", mlp_compact),
+            ("lr_1", lr_1),
+            ("lr_2", lr_2)
         ],
         voting="soft",
-        weights=[3.5, 1.0]
+        weights=[3.0, 2.5, 2.0, 1.0, 0.5]
     )
 
     return Pipeline(steps=[
         ("preprocessor", preprocessor),
-        ("ensemble", ensemble)
+        ("committee", committee)
     ])
 
 
@@ -138,7 +177,6 @@ print("============================================")
 round_scores = {}
 
 if ROUND_DIR.exists():
-    # Detect round folders (e.g. round_6, round_7, round_8)
     round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
     print(f"Found {len(round_folders)} round folders in: {ROUND_DIR.name}/")
 
@@ -146,7 +184,6 @@ if ROUND_DIR.exists():
         round_name = r_dir.name
         csv_files = list(r_dir.glob("*.csv"))
 
-        # Identify train (e.g. round_1_n-1.csv) and test (round_n.csv)
         train_files = [f for f in csv_files if "round_1_" in f.name or "train" in f.name]
         test_files = [f for f in csv_files if f not in train_files]
 
@@ -159,17 +196,15 @@ if ROUND_DIR.exists():
         if target not in r_train_raw.columns or target not in r_test_raw.columns:
             continue
 
-        # Clean datasets
         r_train = clean_data_and_extract_features(r_train_raw)
         r_test = clean_data_and_extract_features(r_test_raw)
 
-        # Separate X and y
         y_r_train = r_train[target]
         X_r_train = r_train.drop(columns=[target])
         y_r_test = r_test[target]
         X_r_test = r_test.drop(columns=[target])
 
-        # Filter high-cardinality (>100)
+        # Drop cardinality > 100
         cat_cols = X_r_train.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
         high_card = [c for c in cat_cols if X_r_train[c].nunique(dropna=True) > 100]
         if high_card:
@@ -179,8 +214,7 @@ if ROUND_DIR.exists():
         cat_cols = X_r_train.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
         num_cols = X_r_train.select_dtypes(include=[np.number]).columns.tolist()
 
-        # Train on past rounds, test on the unseen upcoming round
-        model = create_pipeline(num_cols, cat_cols, seed=42)
+        model = create_committee_pipeline(num_cols, cat_cols, seed=42)
         model.fit(X_r_train, y_r_train)
 
         probs = model.predict_proba(X_r_test)[:, 1]
@@ -193,8 +227,6 @@ if ROUND_DIR.exists():
     if round_scores:
         avg_round_auc = np.mean(list(round_scores.values()))
         print(f"\nAverage Sequential Round ROC-AUC: {avg_round_auc:.5f}")
-else:
-    print(f"Directory {ROUND_DIR} not found. Proceeding directly to full training.")
 
 
 # ============================================================
@@ -202,7 +234,7 @@ else:
 # ============================================================
 
 print("\n============================================")
-print("TRAINING ON FULL DATASET FOR FINAL SUBMISSION")
+print("TRAINING 21-MODEL COMMITTEE ON FULL DATASET")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
@@ -215,7 +247,7 @@ y_full = train_df[target].reset_index(drop=True)
 X_full = train_df.drop(columns=[target]).reset_index(drop=True)
 X_test_full = test_df.reset_index(drop=True)
 
-# Filter high-cardinality (>100)
+# Drop high-cardinality (>100)
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
 if high_cardinality:
@@ -230,18 +262,20 @@ print(f"Features: {len(numerical_features)} numerical, {len(categorical_features
 
 
 # ============================================================
-# 5. MULTI-SEED INFERENCE ON FULL DATA
+# 5. MULTI-SEED INFERENCE ACROSS 7 SEEDS (21 DIVERSE MODELS)
 # ============================================================
 
-# Average 5 distinct random seed initializations on full data
-seeds = [42, 101, 777, 2024, 999]
-full_test_predictions = np.zeros((len(X_test_full), len(seeds)))
+SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
+full_test_predictions = np.zeros((len(X_test_full), len(SEEDS)))
 
-for i, seed in enumerate(seeds):
-    final_model = create_pipeline(numerical_features, categorical_features, seed=seed)
-    final_model.fit(X_full, y_full)
-    full_test_predictions[:, i] = final_model.predict_proba(X_test_full)[:, 1]
+print(f"\nTraining committee across {len(SEEDS)} distinct seeds...")
+for i, seed in enumerate(SEEDS):
+    print(f" -> Fitting Seed {seed} ({i + 1}/{len(SEEDS)})...")
+    committee_pipe = create_committee_pipeline(numerical_features, categorical_features, seed=seed)
+    committee_pipe.fit(X_full, y_full)
+    full_test_predictions[:, i] = committee_pipe.predict_proba(X_test_full)[:, 1]
 
+# Final smooth committee average
 final_probabilities = full_test_predictions.mean(axis=1)
 
 
@@ -261,7 +295,7 @@ if (final_probabilities < 0).any() or (final_probabilities > 1).any():
 # 7. SAVE SUBMISSION FILE
 # ============================================================
 
-output_file = "submission_exp41_sequential_round_ensemble.csv"
+output_file = "submission_exp42_neural_committee_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_raw["anonymised_id"],
@@ -276,7 +310,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 41 COMPLETE")
+print("EXPERIMENT 42 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -290,13 +324,14 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 35 Single Hybrid Blend : 0.65089")
-print("Exp 37 5-Fold Hybrid Blend : 0.65247 (Current Best)")
+print("Exp 35 Single Hybrid Blend    : 0.65089")
+print("Exp 37 5-Fold Hybrid Blend    : 0.65247")
+print("Exp 41 Sequential Multi-Seed  : 0.65325 (Current Best)")
 if round_scores:
     for r_name, score in round_scores.items():
-        print(f"Exp 41 {r_name.upper()} Holdout AUC: {score:.5f}")
-    print(f"Exp 41 Mean Round AUC      : {avg_round_auc:.5f}")
-print("Exp 41 Full Submission     : READY")
+        print(f"Exp 42 {r_name.upper()} Holdout AUC   : {score:.5f}")
+    print(f"Exp 42 Mean Round AUC         : {avg_round_auc:.5f}")
+print("Exp 42 21-Model Full Ensemble : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
