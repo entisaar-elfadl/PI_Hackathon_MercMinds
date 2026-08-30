@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 38 — TARGET-ENCODED MULTI-SCALE 10-FOLD ENSEMBLE
-# (TARGET ENCODING + DUAL MLPs + BALANCED LOGISTIC REGRESSION)
+# EXPERIMENT 39 — MULTI-SEED 5-FOLD ENSEMBLE WITH MISSINGNESS INDICATORS
+# (OPTIMIZED ON EXP 37 FOUNDATION: 15-MODEL SEED AVERAGING)
 # ============================================================
 
 import pandas as pd
@@ -17,17 +17,10 @@ from sklearn.ensemble import VotingClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, accuracy_score
 
-# Scikit-learn TargetEncoder (with robust fallback)
-try:
-    from sklearn.preprocessing import TargetEncoder
-    HAS_TARGET_ENCODER = True
-except ImportError:
-    HAS_TARGET_ENCODER = False
-
 
 print("============================================")
-print("EXPERIMENT 38")
-print("TARGET-ENCODED 10-FOLD MULTI-SCALE ENSEMBLE")
+print("EXPERIMENT 39")
+print("MULTI-SEED 5-FOLD HYBRID ENSEMBLE")
 print("============================================")
 
 
@@ -73,6 +66,7 @@ X = train_clean.drop(columns=[target]).reset_index(drop=True)
 X_test = test_data.copy()
 
 print(f"\nTraining rows after cleaning: {len(X)}")
+print(f"Target balance:\n{y.value_counts(normalize=True)}")
 
 
 # ============================================================
@@ -95,80 +89,52 @@ if "survey_date" in X.columns:
     X["survey_dayofyear"] = X["survey_date"].dt.dayofyear
     X_test["survey_dayofyear"] = X_test["survey_date"].dt.dayofyear
 
-    # Cyclic time encoding
-    X["sin_month"] = np.sin(2 * np.pi * X["survey_month"] / 12)
-    X["cos_month"] = np.cos(2 * np.pi * X["survey_month"] / 12)
-    X_test["sin_month"] = np.sin(2 * np.pi * X_test["survey_month"] / 12)
-    X_test["cos_month"] = np.cos(2 * np.pi * X_test["survey_month"] / 12)
-
     X = X.drop(columns=["survey_date"])
     X_test = X_test.drop(columns=["survey_date"])
 
 
 # ============================================================
-# 5. FEATURE CATEGORIZATION (LOW vs HIGH CARDINALITY)
+# 5. FILTER HIGH CARDINALITY CATEGORIES (>100)
 # ============================================================
 
-raw_cat_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+
+high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
+if high_cardinality:
+    X = X.drop(columns=high_cardinality)
+    X_test = X_test.drop(columns=high_cardinality)
+
+categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-low_card_features = []
-high_card_features = []
-
-for c in raw_cat_features:
-    if X[c].nunique(dropna=True) <= 25:
-        low_card_features.append(c)
-    else:
-        high_card_features.append(c)
-
-print(f"Numerical features: {len(numerical_features)}")
-print(f"Low-cardinality categorical features (One-Hot): {len(low_card_features)}")
-print(f"High-cardinality categorical features (Target Encoded): {len(high_card_features)}")
+print(f"\nFeatures used: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
 
 # ============================================================
-# 6. PIPELINE BUILDER
+# 6. MODEL PIPELINE BUILDER WITH MISSINGNESS INDICATORS
 # ============================================================
 
 def build_model_pipeline(seed=42):
-    transformers = [
-        ("num", Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler())
-        ]), numerical_features),
-        
-        ("cat_low", Pipeline([
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-        ]), low_card_features)
-    ]
+    # add_indicator=True captures survey omission patterns
+    numeric_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+        ("scaler", StandardScaler())
+    ])
 
-    if len(high_card_features) > 0:
-        if HAS_TARGET_ENCODER:
-            transformers.append((
-                "cat_high",
-                Pipeline([
-                    ("imputer", SimpleImputer(strategy="most_frequent")),
-                    ("target_enc", TargetEncoder(smooth="auto", cv=5, random_state=seed)),
-                    ("scaler", StandardScaler())
-                ]),
-                high_card_features
-            ))
-        else:
-            transformers.append((
-                "cat_high",
-                Pipeline([
-                    ("imputer", SimpleImputer(strategy="most_frequent")),
-                    ("onehot", OneHotEncoder(handle_unknown="ignore", max_categories=30, sparse_output=False))
-                ]),
-                high_card_features
-            ))
+    categorical_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent", add_indicator=True)),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+    ])
 
-    preprocessor = ColumnTransformer(transformers=transformers)
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numerical_features),
+            ("cat", categorical_transformer, categorical_features)
+        ]
+    )
 
-    # 1. Wide Perceptron (MLP)
-    mlp_wide = MLPClassifier(
-        hidden_layer_sizes=(128, 64),
+    mlp = MLPClassifier(
+        hidden_layer_sizes=(64, 32),
         activation="relu",
         solver="adam",
         alpha=0.01,
@@ -181,40 +147,21 @@ def build_model_pipeline(seed=42):
         random_state=seed
     )
 
-    # 2. Deep Perceptron (MLP)
-    mlp_deep = MLPClassifier(
-        hidden_layer_sizes=(64, 32, 16),
-        activation="relu",
-        solver="adam",
-        alpha=0.015,
-        batch_size=128,
-        learning_rate_init=0.001,
-        max_iter=350,
-        early_stopping=True,
-        n_iter_no_change=20,
-        validation_fraction=0.15,
-        random_state=seed + 100
-    )
-
-    # 3. Balanced Logistic Anchor
     logistic = LogisticRegression(
         C=0.1,
         penalty="l2",
-        class_weight="balanced",
         solver="lbfgs",
         max_iter=1000,
         random_state=seed
     )
 
-    # Soft voting ensemble with weighted blend
     ensemble = VotingClassifier(
         estimators=[
-            ("mlp_wide", mlp_wide),
-            ("mlp_deep", mlp_deep),
+            ("mlp", mlp),
             ("lr", logistic)
         ],
         voting="soft",
-        weights=[3.0, 2.5, 1.0]
+        weights=[3.5, 1.0]
     )
 
     return Pipeline(steps=[
@@ -224,66 +171,92 @@ def build_model_pipeline(seed=42):
 
 
 # ============================================================
-# 7. 10-FOLD CROSS-VALIDATION & TEST PREDICTION
+# 7. MULTI-SEED 5-FOLD CROSS-VALIDATION (3 SEEDS x 5 FOLDS = 15 MODELS)
 # ============================================================
+
+SEEDS = [42, 101, 777]
+N_SPLITS = 5
+
+all_seed_oof = []
+all_test_predictions = []
 
 print("\n============================================")
-print("RUNNING 10-FOLD STRATIFIED CROSS-VALIDATION")
+print(f"RUNNING {len(SEEDS)} SEEDS x {N_SPLITS}-FOLD CV ({len(SEEDS) * N_SPLITS} TOTAL MODELS)")
 print("============================================")
 
-N_SPLITS = 10
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+for seed_idx, seed in enumerate(SEEDS):
+    print(f"\n--- Running Seed {seed} ({seed_idx + 1}/{len(SEEDS)}) ---")
+    
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
+    seed_oof = np.zeros(len(X))
+    seed_test_preds = np.zeros((len(X_test), N_SPLITS))
 
-oof_predictions = np.zeros(len(X))
-test_fold_predictions = np.zeros((len(X_test), N_SPLITS))
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+        X_train_fold, y_train_fold = X.iloc[train_idx], y.iloc[train_idx]
+        X_val_fold, y_val_fold = X.iloc[val_idx], y.iloc[val_idx]
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_train_fold, y_train_fold = X.iloc[train_idx], y.iloc[train_idx]
-    X_val_fold, y_val_fold = X.iloc[val_idx], y.iloc[val_idx]
+        model = build_model_pipeline(seed=seed + fold * 10)
+        model.fit(X_train_fold, y_train_fold)
 
-    pipeline = build_model_pipeline(seed=42 + fold)
-    pipeline.fit(X_train_fold, y_train_fold)
+        val_probs = model.predict_proba(X_val_fold)[:, 1]
+        seed_oof[val_idx] = val_probs
 
-    val_probs = pipeline.predict_proba(X_val_fold)[:, 1]
-    oof_predictions[val_idx] = val_probs
+        test_probs = model.predict_proba(X_test)[:, 1]
+        seed_test_preds[:, fold] = test_probs
 
-    fold_auc = roc_auc_score(y_val_fold, val_probs)
-    print(f"Fold {fold + 1:02d}/{N_SPLITS} ROC-AUC: {fold_auc:.5f}")
+    seed_auc = roc_auc_score(y, seed_oof)
+    print(f"Seed {seed} OOF ROC-AUC: {seed_auc:.5f}")
 
-    test_fold_predictions[:, fold] = pipeline.predict_proba(X_test)[:, 1]
+    all_seed_oof.append(seed_oof)
+    all_test_predictions.append(seed_test_preds.mean(axis=1))
 
 
-overall_oof_auc = roc_auc_score(y, oof_predictions)
-overall_oof_acc = accuracy_score(y, (oof_predictions >= 0.5).astype(int))
+# ============================================================
+# 8. OVERALL EVALUATION
+# ============================================================
+
+# Average across all seeds
+final_oof_predictions = np.mean(all_seed_oof, axis=0)
+final_test_probabilities = np.mean(all_test_predictions, axis=0)
+
+overall_oof_auc = roc_auc_score(y, final_oof_predictions)
+overall_oof_acc = accuracy_score(y, (final_oof_predictions >= 0.5).astype(int))
 
 print("\n============================================")
-print("CROSS-VALIDATION SUMMARY")
+print("FINAL MULTI-SEED CV RESULTS")
 print("============================================")
-print(f"Overall OOF ROC-AUC Score : {overall_oof_auc:.5f}")
-print(f"Overall OOF Accuracy Score: {overall_oof_acc:.5f}")
+print(f"Overall Multi-Seed OOF ROC-AUC: {overall_oof_auc:.5f}")
+print(f"Overall Multi-Seed Accuracy   : {overall_oof_acc:.5f}")
 
 
 # ============================================================
-# 8. SAVE SUBMISSION FILE
+# 9. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
-final_test_probabilities = test_fold_predictions.mean(axis=1)
+if len(final_test_probabilities) != len(test_data):
+    raise ValueError("Prediction count does not match test data.")
+
+if np.isnan(final_test_probabilities).any():
+    raise ValueError("Predictions contain NaN values.")
+
+if (final_test_probabilities < 0).any() or (final_test_probabilities > 1).any():
+    raise ValueError("Predictions fall outside [0, 1] range.")
 
 submission = pd.DataFrame({
     "anonymised_id": test_data["anonymised_id"],
     "employed_status": final_test_probabilities
 })
 
-output_file = "submission_exp38_target_encoded_10fold.csv"
+output_file = "submission_exp39_multiseed_oof_ensemble.csv"
 submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 9. BENCHMARKS & INSPECTION
+# 10. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 38 COMPLETE")
+print("EXPERIMENT 39 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -297,10 +270,10 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 35 Hybrid Blend       : 0.65089")
-print("Exp 36 Tri-Hybrid         : 0.65074")
-print("Exp 37 5-Fold OOF Blend   : 0.65247")
-print(f"Exp 38 10-Fold Multi-MLP  : OOF Val = {overall_oof_auc:.5f} (Ready for submission)")
+print("Exp 35 Hybrid Single Fit  : 0.65089")
+print("Exp 37 5-Fold Single Seed : 0.65247 (Previous Best)")
+print("Exp 38 Target Encoded     : 0.64350")
+print(f"Exp 39 Multi-Seed 15-Model: OOF Val = {overall_oof_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
