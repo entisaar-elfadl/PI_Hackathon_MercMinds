@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 47 — PURE-LOGIT SAFETY-GATED ENSEMBLE
-# (LOG-ODDS BLENDING OVER REGULARIZED LOGISTIC & ELASTICNET SUITE)
+# EXPERIMENT 48 — FEATURE-AUGMENTED PURE-LOGIT ENSEMBLE
+# (FIXED: ROBUST TARGET CLEANING & DOMAIN FEATURE AUGMENTATION)
 # ============================================================
 
 import pandas as pd
@@ -17,8 +17,8 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 47")
-print("PURE-LOGIT SAFETY-GATED ENSEMBLE")
+print("EXPERIMENT 48")
+print("FEATURE-AUGMENTED PURE-LOGIT ENSEMBLE")
 print("============================================")
 
 
@@ -38,37 +38,92 @@ if not ROUND_DIR.exists():
 
 
 # ============================================================
-# 2. CLEANING & TYPE COERCION
+# 2. FEATURE ENGINEERING & ROBUST TARGET CLEANING
 # ============================================================
 
 target = "employed_status"
 
-def clean_data_and_extract_features(df):
-    """Cleans IDs, dates, and automatically coerces numerical datatypes."""
-    data = df.copy()
+def extract_domain_features(train_df, test_df):
+    """
+    Cleans targets in both train and validation sets, creates frequency
+    encodings, temporal progression, and row-level stats without leakage.
+    """
+    tr = train_df.copy()
+    te = test_df.copy()
 
-    if target in data.columns:
-        data[target] = pd.to_numeric(data[target], errors="coerce")
-        data = data.dropna(subset=[target]).copy()
-        data[target] = data[target].astype(int)
+    # Clean target in training set
+    if target in tr.columns:
+        tr[target] = pd.to_numeric(tr[target], errors="coerce")
+        tr = tr.dropna(subset=[target]).copy()
+        tr[target] = tr[target].astype(int)
 
-    if "anonymised_id" in data.columns:
-        data = data.drop(columns=["anonymised_id"])
+    # Clean target in test/validation set (if present)
+    if target in te.columns:
+        te[target] = pd.to_numeric(te[target], errors="coerce")
+        te = te.dropna(subset=[target]).copy()
+        te[target] = te[target].astype(int)
 
-    if "survey_date" in data.columns:
-        data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
-        data["survey_year"] = data["survey_date"].dt.year
-        data["survey_month"] = data["survey_date"].dt.month
-        data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
-        data = data.drop(columns=["survey_date"])
+    if "anonymised_id" in tr.columns:
+        tr = tr.drop(columns=["anonymised_id"])
+    if "anonymised_id" in te.columns:
+        te = te.drop(columns=["anonymised_id"])
 
-    for col in data.columns:
-        if col != target and data[col].dtype == "object":
-            converted = pd.to_numeric(data[col], errors="coerce")
-            if converted.notna().sum() > 0.6 * data[col].notna().sum():
-                data[col] = converted
+    # Temporal feature engineering
+    if "survey_date" in tr.columns and "survey_date" in te.columns:
+        tr["survey_date"] = pd.to_datetime(tr["survey_date"], errors="coerce")
+        te["survey_date"] = pd.to_datetime(te["survey_date"], errors="coerce")
 
-    return data
+        min_date = min(tr["survey_date"].dropna().min(), te["survey_date"].dropna().min())
+        
+        tr["days_elapsed"] = (tr["survey_date"] - min_date).dt.days
+        te["days_elapsed"] = (te["survey_date"] - min_date).dt.days
+
+        tr["survey_year"] = tr["survey_date"].dt.year
+        te["survey_year"] = te["survey_date"].dt.year
+        tr["survey_month"] = tr["survey_date"].dt.month
+        te["survey_month"] = te["survey_date"].dt.month
+        tr["survey_quarter"] = tr["survey_date"].dt.quarter
+        te["survey_quarter"] = te["survey_date"].dt.quarter
+
+        tr = tr.drop(columns=["survey_date"])
+        te = te.drop(columns=["survey_date"])
+
+    # Auto-convert numeric strings
+    for col in tr.columns:
+        if col != target and tr[col].dtype == "object":
+            converted_tr = pd.to_numeric(tr[col], errors="coerce")
+            if converted_tr.notna().sum() > 0.6 * tr[col].notna().sum():
+                tr[col] = converted_tr
+                if col in te.columns:
+                    te[col] = pd.to_numeric(te[col], errors="coerce")
+
+    # Align common columns
+    common_cols = [c for c in tr.columns if c in te.columns and c != target]
+
+    # Frequency Encoding for high-cardinality categories (>25 unique values)
+    cat_cols = tr[common_cols].select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    
+    for col in cat_cols:
+        if tr[col].nunique(dropna=True) > 25:
+            freq_map = tr[col].value_counts(normalize=True).to_dict()
+            tr[f"{col}_freq"] = tr[col].map(freq_map).fillna(0.0).astype(float)
+            te[f"{col}_freq"] = te[col].map(freq_map).fillna(0.0).astype(float)
+            tr = tr.drop(columns=[col])
+            te = te.drop(columns=[col])
+
+    # Row-level summary statistics across numerical answers
+    common_cols = [c for c in tr.columns if c in te.columns and c != target]
+    num_cols = tr[common_cols].select_dtypes(include=[np.number]).columns.tolist()
+
+    if len(num_cols) >= 4:
+        tr["row_num_mean"] = tr[num_cols].mean(axis=1).fillna(0.0)
+        te["row_num_mean"] = te[num_cols].mean(axis=1).fillna(0.0)
+        tr["row_num_std"] = tr[num_cols].std(axis=1).fillna(0.0)
+        te["row_num_std"] = te[num_cols].std(axis=1).fillna(0.0)
+        tr["row_num_zeros"] = (tr[num_cols].fillna(-999) == 0).sum(axis=1)
+        te["row_num_zeros"] = (te[num_cols].fillna(-999) == 0).sum(axis=1)
+
+    return tr, te
 
 
 def build_linear_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
@@ -98,7 +153,7 @@ def build_linear_preprocessor(numerical_cols, categorical_cols, use_quantile=Fal
 # ============================================================
 
 def get_pure_logit_candidates(seed=42):
-    """Returns strictly calibrated, regularized logistic and linear classifiers."""
+    """Returns proven, calibrated regularized logistic models."""
     return {
         "LogReg L2 (C=0.07)": (
             LogisticRegression(C=0.07, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
@@ -106,10 +161,6 @@ def get_pure_logit_candidates(seed=42):
         ),
         "LogReg L2 (C=0.10)": (
             LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False
-        ),
-        "LogReg L2 (C=0.12)": (
-            LogisticRegression(C=0.12, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False
         ),
         "LogReg ElasticNet (C=0.08, L1=0.12)": (
@@ -127,16 +178,12 @@ def get_pure_logit_candidates(seed=42):
         "Quantile LogReg ElasticNet (C=0.10)": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
             True
-        ),
-        "Calibrated Ridge (alpha=1.5)": (
-            CalibratedClassifierCV(estimator=RidgeClassifier(alpha=1.5, random_state=seed), method="sigmoid", cv=3),
-            False
         )
     }
 
 
 # ============================================================
-# 4. LOAD VALID ROUND DATASETS
+# 4. LOAD & BENCHMARK ON SEQUENTIAL ROUND DATASETS
 # ============================================================
 
 print("\n============================================")
@@ -157,19 +204,18 @@ if ROUND_DIR.exists():
             r_test_raw = pd.read_csv(test_file)
 
             if target in r_train_raw.columns and target in r_test_raw.columns:
-                r_train = clean_data_and_extract_features(r_train_raw)
-                r_test = clean_data_and_extract_features(r_test_raw)
+                r_train_fe, r_test_fe = extract_domain_features(r_train_raw, r_test_raw)
+                common_features = [c for c in r_train_fe.columns if c in r_test_fe.columns and c != target]
 
-                common_features = [c for c in r_train.columns if c in r_test.columns and c != target]
                 if len(common_features) >= 5:
                     round_data_list.append({
                         "name": r_dir.name,
-                        "X_train": r_train[common_features],
-                        "y_train": r_train[target],
-                        "X_test": r_test[common_features],
-                        "y_test": r_test[target]
+                        "X_train": r_train_fe[common_features].reset_index(drop=True),
+                        "y_train": r_train_fe[target].reset_index(drop=True),
+                        "X_test": r_test_fe[common_features].reset_index(drop=True),
+                        "y_test": r_test_fe[target].reset_index(drop=True)
                     })
-                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train)} | Test: {len(r_test)} | Features: {len(common_features)}")
+                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train_fe)} | Test: {len(r_test_fe)} | Features: {len(common_features)}")
 
 
 # ============================================================
@@ -177,7 +223,7 @@ if ROUND_DIR.exists():
 # ============================================================
 
 print("\n============================================")
-print("RUNNING SAFETY-GATED ROUND TOURNAMENT")
+print("RUNNING FEATURE-AUGMENTED ROUND TOURNAMENT")
 print("============================================")
 
 candidate_dict = get_pure_logit_candidates(seed=42)
@@ -191,12 +237,6 @@ for r_data in round_data_list:
     y_tr = r_data["y_train"].copy()
     X_te = r_data["X_test"].copy()
     y_te = r_data["y_test"].copy()
-
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
-    if high_card:
-        X_tr = X_tr.drop(columns=high_card)
-        X_te = X_te.drop(columns=high_card)
 
     cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
     num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
@@ -226,40 +266,33 @@ for model_name, scores in tournament_scores.items():
 leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
 
 print("\n============================================")
-print("SAFETY-GATED TOURNAMENT LEADERBOARD")
+print("FEATURE-AUGMENTED TOURNAMENT LEADERBOARD")
 print("============================================")
 print(leaderboard_df.to_string(index=False))
 
-# Select top performing models scoring >= 0.625 mean round AUC (or top 4)
+# Select Top 4 Champions
 top_performers = leaderboard_df.head(4)["Model Architecture"].tolist()
-print(f"\n🏆 TOP CHAMPIONS SELECTED FOR LOG-ODDS ENSEMBLE: {top_performers}")
+print(f"\n🏆 TOP CHAMPIONS SELECTED FOR ENSEMBLE: {top_performers}")
 
 
 # ============================================================
-# 6. LOG-ODDS MULTI-SEED FULL DATASET ENSEMBLE
+# 6. MULTI-SEED FULL DATASET ENSEMBLE WITH LOG-ODDS BLENDING
 # ============================================================
 
 print("\n============================================")
-print("TRAINING MULTI-SEED LOG-ODDS ENSEMBLE ON FULL DATASET")
+print("TRAINING FEATURE-AUGMENTED ENSEMBLE ON FULL DATASET")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 
-train_df = clean_data_and_extract_features(train_raw)
-test_df = clean_data_and_extract_features(test_raw)
+train_fe, test_fe = extract_domain_features(train_raw, test_raw)
 
-common_cols = [c for c in train_df.columns if c in test_df.columns and c != target]
+common_cols = [c for c in train_fe.columns if c in test_fe.columns and c != target]
 
-y_full = train_df[target].reset_index(drop=True)
-X_full = train_df[common_cols].reset_index(drop=True)
-X_test_full = test_df[common_cols].reset_index(drop=True)
-
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
-if high_cardinality:
-    X_full = X_full.drop(columns=high_cardinality)
-    X_test_full = X_test_full.drop(columns=high_cardinality)
+y_full = train_fe[target].reset_index(drop=True)
+X_full = train_fe[common_cols].reset_index(drop=True)
+X_test_full = test_fe[common_cols].reset_index(drop=True)
 
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
@@ -289,7 +322,7 @@ for m_idx, m_name in enumerate(top_performers):
         logits = np.log(probs_clipped / (1.0 - probs_clipped))
         all_model_logits.append(logits)
 
-# Average in Logit Space and transform back with Sigmoid
+# Average in Log-Odds space and convert back with Sigmoid
 mean_logits = np.mean(all_model_logits, axis=0)
 final_probabilities = 1.0 / (1.0 + np.exp(-mean_logits))
 
@@ -305,7 +338,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp47_pure_logit_ensemble.csv"
+output_file = "submission_exp48_feature_augmented_logit_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_raw["anonymised_id"],
@@ -320,7 +353,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 47 COMPLETE")
+print("EXPERIMENT 48 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -337,8 +370,9 @@ print("============================================")
 print("Exp 41 Sequential Hybrid      : 0.65325")
 print("Exp 43 Single LogReg Champ    : 0.65502")
 print("Exp 44 Top-3 Linear Blend     : 0.65630")
+print("Exp 47 Pure-Logit Ensemble    : 0.65635")
 print("Personal Best Benchmark       : 0.65671")
-print("Exp 47 Pure-Logit Ensemble    : READY")
+print("Exp 48 Feature-Augmented Logit: READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
