@@ -1,24 +1,26 @@
 # ============================================================
-# EXPERIMENT 48 — FEATURE-AUGMENTED PURE-LOGIT ENSEMBLE
-# (FIXED: ROBUST TARGET CLEANING & DOMAIN FEATURE AUGMENTATION)
+# EXPERIMENT 49 — DOMAIN-ENGINEERED YOUTH LABOUR MARKET ENSEMBLE
+# (EXPLICIT LAG SEMANTICS, MATRIC ORDINAL PARSER & MULTI-PARADIGM BLEND)
 # ============================================================
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import re
 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
-from sklearn.linear_model import LogisticRegression, RidgeClassifier
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import HistGradientBoostingClassifier, VotingClassifier
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 48")
-print("FEATURE-AUGMENTED PURE-LOGIT ENSEMBLE")
+print("EXPERIMENT 49")
+print("DOMAIN-ENGINEERED YOUTH LABOUR MARKET ENSEMBLE")
 print("============================================")
 
 
@@ -32,299 +34,271 @@ DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
-ROUND_DIR = CURRENT_DIR / "round_testing"
-if not ROUND_DIR.exists():
-    ROUND_DIR = DATA_DIR / "round_testing"
-
 
 # ============================================================
-# 2. FEATURE ENGINEERING & ROBUST TARGET CLEANING
+# 2. DOMAIN FEATURE ENGINEERING FUNCTIONS
 # ============================================================
 
 target = "employed_status"
 
-def extract_domain_features(train_df, test_df):
-    """
-    Cleans targets in both train and validation sets, creates frequency
-    encodings, temporal progression, and row-level stats without leakage.
-    """
-    tr = train_df.copy()
-    te = test_df.copy()
+def parse_matric_band(val):
+    """Parses banded percentage strings like '50 - 59 %' into numeric midpoints."""
+    if pd.isna(val):
+        return np.nan
+    s = str(val).replace("%", "").strip()
+    if "-" in s:
+        parts = s.split("-")
+        try:
+            return (float(parts[0]) + float(parts[1])) / 2.0
+        except Exception:
+            return np.nan
+    elif "<" in s:
+        try:
+            return float(s.replace("<", "").strip()) / 2.0
+        except Exception:
+            return np.nan
+    elif ">" in s:
+        try:
+            return float(s.replace(">", "").strip()) + 5.0
+        except Exception:
+            return np.nan
+    else:
+        try:
+            return float(s)
+        except Exception:
+            return np.nan
 
-    # Clean target in training set
-    if target in tr.columns:
-        tr[target] = pd.to_numeric(tr[target], errors="coerce")
-        tr = tr.dropna(subset=[target]).copy()
-        tr[target] = tr[target].astype(int)
 
-    # Clean target in test/validation set (if present)
-    if target in te.columns:
-        te[target] = pd.to_numeric(te[target], errors="coerce")
-        te = te.dropna(subset=[target]).copy()
-        te[target] = te[target].astype(int)
+def engineer_domain_features(df, is_train=True):
+    """Engineers labour market lag semantics, matric marks, and demographic features."""
+    data = df.copy()
 
-    if "anonymised_id" in tr.columns:
-        tr = tr.drop(columns=["anonymised_id"])
-    if "anonymised_id" in te.columns:
-        te = te.drop(columns=["anonymised_id"])
+    # 1. Target Cleaning (if present)
+    if target in data.columns:
+        data[target] = pd.to_numeric(data[target], errors="coerce")
+        data = data.dropna(subset=[target]).copy()
+        data[target] = data[target].astype(int)
 
-    # Temporal feature engineering
-    if "survey_date" in tr.columns and "survey_date" in te.columns:
-        tr["survey_date"] = pd.to_datetime(tr["survey_date"], errors="coerce")
-        te["survey_date"] = pd.to_datetime(te["survey_date"], errors="coerce")
+    # 2. Identification
+    if "anonymised_id" in data.columns:
+        data = data.drop(columns=["anonymised_id"])
 
-        min_date = min(tr["survey_date"].dropna().min(), te["survey_date"].dropna().min())
-        
-        tr["days_elapsed"] = (tr["survey_date"] - min_date).dt.days
-        te["days_elapsed"] = (te["survey_date"] - min_date).dt.days
+    # 3. Wave Timeline & Dates
+    if "survey_date" in data.columns:
+        data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
+        data["survey_year"] = data["survey_date"].dt.year
+        data["survey_month"] = data["survey_date"].dt.month
+        data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
+        data = data.drop(columns=["survey_date"])
 
-        tr["survey_year"] = tr["survey_date"].dt.year
-        te["survey_year"] = te["survey_date"].dt.year
-        tr["survey_month"] = tr["survey_date"].dt.month
-        te["survey_month"] = te["survey_date"].dt.month
-        tr["survey_quarter"] = tr["survey_date"].dt.quarter
-        te["survey_quarter"] = te["survey_date"].dt.quarter
+    # 4. Lag Semantics & First-Time Observation Flag
+    data["is_first_time_participant"] = (
+        data["employed_lag"].isna() | 
+        data["days_since_last_obs"].isna() | 
+        (data["total_historical_rounds"].fillna(1) <= 1)
+    ).astype(int)
 
-        tr = tr.drop(columns=["survey_date"])
-        te = te.drop(columns=["survey_date"])
+    # Tri-state employment lag: -1 = Never observed before, 0 = Unemployed, 1 = Employed
+    data["employed_lag_tristate"] = data["employed_lag"].fillna(-1).astype(float)
 
-    # Auto-convert numeric strings
-    for col in tr.columns:
-        if col != target and tr[col].dtype == "object":
-            converted_tr = pd.to_numeric(tr[col], errors="coerce")
-            if converted_tr.notna().sum() > 0.6 * tr[col].notna().sum():
-                tr[col] = converted_tr
-                if col in te.columns:
-                    te[col] = pd.to_numeric(te[col], errors="coerce")
+    # Log transforms for skewed duration metrics
+    data["tenure_lag_log"] = np.log1p(data["tenure_lag"].fillna(0).clip(lower=0))
+    data["days_since_last_obs_log"] = np.log1p(data["days_since_last_obs"].fillna(0).clip(lower=0))
 
-    # Align common columns
-    common_cols = [c for c in tr.columns if c in te.columns and c != target]
+    if "current_round" in data.columns and "lag_round" in data.columns:
+        data["round_gap"] = (data["current_round"] - data["lag_round"].fillna(data["current_round"] - 1)).clip(lower=1)
 
-    # Frequency Encoding for high-cardinality categories (>25 unique values)
-    cat_cols = tr[common_cols].select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    # 5. Matric Subject Performance Bands -> Continuous Numerical
+    matric_cols = [
+        "matric_englishhome", "matric_englishadd", 
+        "matric_mathpure", "matric_physicalscience", "matric_mathlit"
+    ]
     
-    for col in cat_cols:
-        if tr[col].nunique(dropna=True) > 25:
-            freq_map = tr[col].value_counts(normalize=True).to_dict()
-            tr[f"{col}_freq"] = tr[col].map(freq_map).fillna(0.0).astype(float)
-            te[f"{col}_freq"] = te[col].map(freq_map).fillna(0.0).astype(float)
-            tr = tr.drop(columns=[col])
-            te = te.drop(columns=[col])
+    for m_col in matric_cols:
+        if m_col in data.columns:
+            data[f"{m_col}_num"] = data[m_col].apply(parse_matric_band)
+            data = data.drop(columns=[m_col])
 
-    # Row-level summary statistics across numerical answers
-    common_cols = [c for c in tr.columns if c in te.columns and c != target]
-    num_cols = tr[common_cols].select_dtypes(include=[np.number]).columns.tolist()
+    # Aggregated Matric Indicators
+    num_m_cols = [f"{m}_num" for m in matric_cols if f"{m}_num" in data.columns]
+    data["matric_subjects_count"] = data[num_m_cols].notna().sum(axis=1)
+    data["matric_avg_score"] = data[num_m_cols].mean(axis=1).fillna(-1)
+    
+    if "matric_mathpure_num" in data.columns and "matric_mathlit_num" in data.columns:
+        data["matric_best_math"] = data[["matric_mathpure_num", "matric_mathlit_num"]].max(axis=1).fillna(-1)
 
-    if len(num_cols) >= 4:
-        tr["row_num_mean"] = tr[num_cols].mean(axis=1).fillna(0.0)
-        te["row_num_mean"] = te[num_cols].mean(axis=1).fillna(0.0)
-        tr["row_num_std"] = tr[num_cols].std(axis=1).fillna(0.0)
-        te["row_num_std"] = te[num_cols].std(axis=1).fillna(0.0)
-        tr["row_num_zeros"] = (tr[num_cols].fillna(-999) == 0).sum(axis=1)
-        te["row_num_zeros"] = (te[num_cols].fillna(-999) == 0).sum(axis=1)
+    if "matric_englishhome_num" in data.columns and "matric_englishadd_num" in data.columns:
+        data["matric_best_english"] = data[["matric_englishhome_num", "matric_englishadd_num"]].max(axis=1).fillna(-1)
 
-    return tr, te
+    # 6. Education & Qualifications Hierarchy
+    if "school_quintile" in data.columns:
+        data["school_quintile"] = pd.to_numeric(data["school_quintile"], errors="coerce").fillna(0)
 
+    if "work_readiness_score" in data.columns:
+        data["work_readiness_score"] = pd.to_numeric(data["work_readiness_score"], errors="coerce").fillna(-1)
 
-def build_linear_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    """Builds standard or quantile-normalized preprocessor."""
-    transformers = []
+    # Sparse qualification indicators
+    if "institution_type" in data.columns:
+        data["has_tertiary_record"] = data["institution_type"].notna().astype(int)
 
-    if len(numerical_cols) > 0:
-        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
-        numeric_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", scaler)
-        ])
-        transformers.append(("num", numeric_transformer, numerical_cols))
+    if "seta" in data.columns:
+        data["has_seta_credential"] = data["seta"].notna().astype(int)
 
-    if len(categorical_cols) > 0:
-        categorical_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-        ])
-        transformers.append(("cat", categorical_transformer, categorical_cols))
-
-    return ColumnTransformer(transformers=transformers)
+    return data
 
 
 # ============================================================
-# 3. PURE LOGISTIC CANDIDATE SUITE
-# ============================================================
-
-def get_pure_logit_candidates(seed=42):
-    """Returns proven, calibrated regularized logistic models."""
-    return {
-        "LogReg L2 (C=0.07)": (
-            LogisticRegression(C=0.07, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False
-        ),
-        "LogReg L2 (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False
-        ),
-        "LogReg ElasticNet (C=0.08, L1=0.12)": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.12, max_iter=1000, random_state=seed),
-            False
-        ),
-        "LogReg ElasticNet (C=0.10, L1=0.18)": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.18, max_iter=1000, random_state=seed),
-            False
-        ),
-        "Quantile LogReg L2 (C=0.08)": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            True
-        ),
-        "Quantile LogReg ElasticNet (C=0.10)": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
-            True
-        )
-    }
-
-
-# ============================================================
-# 4. LOAD & BENCHMARK ON SEQUENTIAL ROUND DATASETS
+# 3. LOAD DATA & APPLY TRANSFORMATIONS
 # ============================================================
 
 print("\n============================================")
-print("DISCOVERING SEQUENTIAL ROUND DATASETS")
-print("============================================")
-
-round_data_list = []
-
-if ROUND_DIR.exists():
-    round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
-    for r_dir in round_folders:
-        csv_files = list(r_dir.glob("*.csv"))
-        if len(csv_files) >= 2:
-            csv_files = sorted(csv_files, key=lambda f: f.stat().st_size)
-            test_file, train_file = csv_files[0], csv_files[1]
-
-            r_train_raw = pd.read_csv(train_file)
-            r_test_raw = pd.read_csv(test_file)
-
-            if target in r_train_raw.columns and target in r_test_raw.columns:
-                r_train_fe, r_test_fe = extract_domain_features(r_train_raw, r_test_raw)
-                common_features = [c for c in r_train_fe.columns if c in r_test_fe.columns and c != target]
-
-                if len(common_features) >= 5:
-                    round_data_list.append({
-                        "name": r_dir.name,
-                        "X_train": r_train_fe[common_features].reset_index(drop=True),
-                        "y_train": r_train_fe[target].reset_index(drop=True),
-                        "X_test": r_test_fe[common_features].reset_index(drop=True),
-                        "y_test": r_test_fe[target].reset_index(drop=True)
-                    })
-                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train_fe)} | Test: {len(r_test_fe)} | Features: {len(common_features)}")
-
-
-# ============================================================
-# 5. SAFETY-GATED TOURNAMENT BENCHMARK
-# ============================================================
-
-print("\n============================================")
-print("RUNNING FEATURE-AUGMENTED ROUND TOURNAMENT")
-print("============================================")
-
-candidate_dict = get_pure_logit_candidates(seed=42)
-tournament_scores = {name: [] for name in candidate_dict.keys()}
-round_names = []
-
-for r_data in round_data_list:
-    r_name = r_data["name"]
-    round_names.append(r_name.upper())
-    X_tr = r_data["X_train"].copy()
-    y_tr = r_data["y_train"].copy()
-    X_te = r_data["X_test"].copy()
-    y_te = r_data["y_test"].copy()
-
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
-
-    models_dict = get_pure_logit_candidates(seed=42)
-
-    for model_name, (model_obj, use_quantile) in models_dict.items():
-        preprocessor = build_linear_preprocessor(num_cols, cat_cols, use_quantile=use_quantile)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
-        ])
-        pipe.fit(X_tr, y_tr)
-        probs = pipe.predict_proba(X_te)[:, 1]
-        score = roc_auc_score(y_te, probs)
-        tournament_scores[model_name].append(score)
-
-# Leaderboard Summary
-results_table = []
-for model_name, scores in tournament_scores.items():
-    mean_score = np.mean(scores) if scores else 0.0
-    row = {"Model Architecture": model_name, "Mean Round AUC": mean_score}
-    for i, s in enumerate(scores):
-        row[f"{round_names[i]} AUC"] = s
-    results_table.append(row)
-
-leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
-
-print("\n============================================")
-print("FEATURE-AUGMENTED TOURNAMENT LEADERBOARD")
-print("============================================")
-print(leaderboard_df.to_string(index=False))
-
-# Select Top 4 Champions
-top_performers = leaderboard_df.head(4)["Model Architecture"].tolist()
-print(f"\n🏆 TOP CHAMPIONS SELECTED FOR ENSEMBLE: {top_performers}")
-
-
-# ============================================================
-# 6. MULTI-SEED FULL DATASET ENSEMBLE WITH LOG-ODDS BLENDING
-# ============================================================
-
-print("\n============================================")
-print("TRAINING FEATURE-AUGMENTED ENSEMBLE ON FULL DATASET")
+print("LOADING DATASETS & EXTRACTING SIGNALS")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 
-train_fe, test_fe = extract_domain_features(train_raw, test_raw)
+train_df = engineer_domain_features(train_raw, is_train=True)
+test_df = engineer_domain_features(test_raw, is_train=False)
 
-common_cols = [c for c in train_fe.columns if c in test_fe.columns and c != target]
+# Frequency-encode high-cardinality text fields (municipality, district, qualification name)
+common_cols = [c for c in train_df.columns if c in test_df.columns and c != target]
+cat_cols = train_df[common_cols].select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 
-y_full = train_fe[target].reset_index(drop=True)
-X_full = train_fe[common_cols].reset_index(drop=True)
-X_test_full = test_fe[common_cols].reset_index(drop=True)
+for col in cat_cols:
+    if train_df[col].nunique(dropna=True) > 25:
+        freq_map = train_df[col].value_counts(normalize=True).to_dict()
+        train_df[f"{col}_freq"] = train_df[col].map(freq_map).fillna(0.0).astype(float)
+        test_df[f"{col}_freq"] = test_df[col].map(freq_map).fillna(0.0).astype(float)
+        train_df = train_df.drop(columns=[col])
+        test_df = test_df.drop(columns=[col])
 
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
+# Re-align final columns
+common_cols = [c for c in train_df.columns if c in test_df.columns and c != target]
 
-print(f"Full dataset: {len(X_full)} rows | Features: {len(numerical_features)} num, {len(categorical_features)} cat")
+y = train_df[target].reset_index(drop=True)
+X = train_df[common_cols].reset_index(drop=True)
+X_test = test_df[common_cols].reset_index(drop=True)
 
-SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
-all_model_logits = []
+categorical_features = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-for m_idx, m_name in enumerate(top_performers):
-    print(f" -> Fitting Champion #{m_idx + 1}: {m_name} across {len(SEEDS)} seeds...")
+print(f"Training observations: {len(X)}")
+print(f"Testing observations: {len(X_test)}")
+print(f"Engineered Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
-    for s_idx, seed in enumerate(SEEDS):
-        candidate_pool = get_pure_logit_candidates(seed=seed)
-        model_estimator, use_quantile = candidate_pool[m_name]
 
-        preprocessor = build_linear_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_estimator)
-        ])
-        pipe.fit(X_full, y_full)
-        probs = pipe.predict_proba(X_test_full)[:, 1]
+# ============================================================
+# 4. PREPROCESSOR & HYBRID ENSEMBLE ARCHITECTURE
+# ============================================================
 
-        # Convert to log-odds (logit space)
-        probs_clipped = np.clip(probs, 1e-6, 1.0 - 1e-6)
-        logits = np.log(probs_clipped / (1.0 - probs_clipped))
-        all_model_logits.append(logits)
+def build_model_pipeline(seed=42):
+    numeric_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ])
 
-# Average in Log-Odds space and convert back with Sigmoid
-mean_logits = np.mean(all_model_logits, axis=0)
-final_probabilities = 1.0 / (1.0 + np.exp(-mean_logits))
+    categorical_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+    ])
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numerical_features),
+            ("cat", categorical_transformer, categorical_features)
+        ]
+    )
+
+    # 1. Regularized Logistic Regression (Linear Log-Odds Anchor)
+    logistic = LogisticRegression(
+        C=0.10,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=seed
+    )
+
+    # 2. Gradient Boosted Decision Tree (Captures Non-Linear Lag & Matric Interactions)
+    hgb = HistGradientBoostingClassifier(
+        loss="log_loss",
+        learning_rate=0.035,
+        max_iter=350,
+        max_leaf_nodes=31,
+        min_samples_leaf=25,
+        l2_regularization=2.0,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed
+    )
+
+    # Soft Voting Hybrid (50% Linear Log-Odds + 50% Non-Linear Decision Trees)
+    hybrid_ensemble = VotingClassifier(
+        estimators=[
+            ("lr", logistic),
+            ("hgb", hgb)
+        ],
+        voting="soft",
+        weights=[1.0, 1.0]
+    )
+
+    return Pipeline(steps=[
+        ("preprocessor", preprocessor),
+        ("ensemble", hybrid_ensemble)
+    ])
+
+
+# ============================================================
+# 5. 5-FOLD STRATIFIED CROSS-VALIDATION
+# ============================================================
+
+print("\n============================================")
+print("RUNNING 5-FOLD STRATIFIED CROSS-VALIDATION")
+print("============================================")
+
+N_SPLITS = 5
+skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+
+oof_probabilities = np.zeros(len(X))
+test_fold_predictions = np.zeros((len(X_test), N_SPLITS))
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+    X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
+
+    pipe = build_model_pipeline(seed=42 + fold)
+    pipe.fit(X_tr_f, y_tr_f)
+
+    val_probs = pipe.predict_proba(X_va_f)[:, 1]
+    oof_probabilities[val_idx] = val_probs
+
+    fold_auc = roc_auc_score(y_va_f, val_probs)
+    print(f"Fold {fold + 1} ROC-AUC: {fold_auc:.5f}")
+
+    test_fold_predictions[:, fold] = pipe.predict_proba(X_test)[:, 1]
+
+overall_oof_auc = roc_auc_score(y, oof_probabilities)
+print("\n============================================")
+print(f"OVERALL DOMAIN OOF ROC-AUC: {overall_oof_auc:.5f}")
+print("============================================")
+
+
+# ============================================================
+# 6. MULTI-SEED FULL DATASET ENSEMBLE INFERENCE
+# ============================================================
+
+print("\nTraining Multi-Seed Final Ensemble on Full Dataset...")
+SEEDS = [42, 101, 777, 2024, 999]
+full_test_preds = np.zeros((len(X_test), len(SEEDS)))
+
+for i, seed in enumerate(SEEDS):
+    full_pipe = build_model_pipeline(seed=seed)
+    full_pipe.fit(X, y)
+    full_test_preds[:, i] = full_pipe.predict_proba(X_test)[:, 1]
+
+# Blend 5-Fold OOF Predictions with Full Multi-Seed Model for Maximum Stability
+final_probabilities = 0.50 * test_fold_predictions.mean(axis=1) + 0.50 * full_test_preds.mean(axis=1)
 
 
 # ============================================================
@@ -338,7 +312,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp48_feature_augmented_logit_ensemble.csv"
+output_file = "submission_exp49_domain_labour_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_raw["anonymised_id"],
@@ -353,7 +327,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 48 COMPLETE")
+print("EXPERIMENT 49 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -367,12 +341,8 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 41 Sequential Hybrid      : 0.65325")
-print("Exp 43 Single LogReg Champ    : 0.65502")
-print("Exp 44 Top-3 Linear Blend     : 0.65630")
-print("Exp 47 Pure-Logit Ensemble    : 0.65635")
-print("Personal Best Benchmark       : 0.65671")
-print("Exp 48 Feature-Augmented Logit: READY")
+print("Personal Best Benchmark          : 0.65671")
+print(f"Exp 49 Domain-Engineered OOF AUC : {overall_oof_auc:.5f}")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
