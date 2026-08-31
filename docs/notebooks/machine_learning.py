@@ -1,6 +1,6 @@
 # ============================================================
 # EXPERIMENT 50 — PURE-LOGIT DOMAIN CHAMPION
-# (SAFE DOMAIN PARSER + 1/0 NA INDICATORS + LOGIT ENSEMBLE)
+# (SAFE TARGET VALIDATION + 1/0 NA INDICATORS + LOGIT ENSEMBLE)
 # ============================================================
 
 import pandas as pd
@@ -258,15 +258,22 @@ if ROUND_DIR.exists():
                 r_test_clean = extract_clean_domain_features(r_test_raw)
 
                 common_features = [c for c in r_train_clean.columns if c in r_test_clean.columns and c != target]
-                if len(common_features) >= 5:
+
+                # STRICT VALIDITY CHECK: Must have >= 20 common features AND both classes (0 and 1) in train & test
+                y_tr_vals = r_train_clean[target]
+                y_te_vals = r_test_clean[target]
+
+                if len(common_features) >= 20 and y_tr_vals.nunique() >= 2 and y_te_vals.nunique() >= 2:
                     round_data_list.append({
                         "name": r_dir.name,
                         "X_train": r_train_clean[common_features].reset_index(drop=True),
-                        "y_train": r_train_clean[target].reset_index(drop=True),
+                        "y_train": y_tr_vals.reset_index(drop=True),
                         "X_test": r_test_clean[common_features].reset_index(drop=True),
-                        "y_test": r_test_clean[target].reset_index(drop=True)
+                        "y_test": y_te_vals.reset_index(drop=True)
                     })
                     print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train_clean)} | Test: {len(r_test_clean)} | Features: {len(common_features)}")
+                else:
+                    print(f" -> Skipping {r_dir.name.upper()} (Single target class or insufficient features)")
 
 
 # ============================================================
@@ -289,7 +296,6 @@ for r_data in round_data_list:
     X_te = r_data["X_test"].copy()
     y_te = r_data["y_test"].copy()
 
-    # Drop high-cardinality categorical (>100)
     cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
     high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
     if high_card:
@@ -312,7 +318,7 @@ for r_data in round_data_list:
         score = roc_auc_score(y_te, probs)
         tournament_scores[model_name].append(score)
 
-# Leaderboard Summary
+# Leaderboard
 results_table = []
 for model_name, scores in tournament_scores.items():
     mean_score = np.mean(scores) if scores else 0.0
@@ -352,7 +358,6 @@ y_full = train_clean[target].reset_index(drop=True)
 X_full = train_clean[common_cols].reset_index(drop=True)
 X_test_full = test_clean[common_cols].reset_index(drop=True)
 
-# Drop high-cardinality categorical (>100)
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
 if high_cardinality:
