@@ -1,451 +1,2816 @@
+
 # ============================================================
-# EXPERIMENT 62 — MULTI-VIEW LEAK-FREE OOF STACKING
-# (RAW, IN-FOLD SEM, IN-FOLD PLS, COMBINED, INTERACTIONS & MLP)
+# EXPERIMENT 62 — SEM × SUPERVISED STACKED CLASSIFIER
+#
+# HARD ROUND 8 GATE
+#
+# NOTHING IS TRAINED ON THE FULL DATASET UNLESS:
+#
+#       ROUND 8 ROC-AUC >= 0.6800
+#
+# Strategy:
+#   1. Load Round 8 correctly:
+#        rounds_1_7.csv -> training
+#        round_8.csv    -> validation
+#
+#   2. Build multiple DISTINCT model manifolds:
+#
+#        A. Raw Logistic Regression
+#        B. Raw ElasticNet Logistic
+#        C. SEM Factor Analysis + Logistic
+#        D. SEM PLS + Logistic
+#        E. Raw + SEM combined Logistic
+#        F. Raw + SEM interaction Logistic
+#        G. Combined MLP
+#
+#   3. Benchmark ALL models on Round 8.
+#
+#   4. HARD GATE:
+#        Only models >= 0.6800 survive.
+#
+#   5. Create OOF predictions for surviving models.
+#
+#   6. Train a LogisticRegression meta-classifier on OOF
+#      predictions.
+#
+#   7. Validate the stack on Round 8.
+#
+#   8. The stack itself must also reach >= 0.6800.
+#
+#   9. ONLY THEN train on the COMPLETE dataset.
+#
+#  10. Produce Kaggle submission.
+#
 # ============================================================
+
+import warnings
+warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
+
 from pathlib import Path
 
+from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import (
+    StandardScaler,
+    OneHotEncoder,
+    QuantileTransformer,
+    PolynomialFeatures
+)
+
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
+
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score, accuracy_score
-
-
-print("============================================")
-print("EXPERIMENT 62")
-print("MULTI-VIEW LEAK-FREE OOF STACKING")
-print("============================================")
+from sklearn.metrics import roc_auc_score
 
 
 # ============================================================
-# 1. DIRECTORY PATHS
+# 0. EXPERIMENT CONFIGURATION
+# ============================================================
+
+EXPERIMENT_NAME = "EXP 62 — SEM × SUPERVISED STACKED CLASSIFIER"
+
+ROUND_NUMBER = 8
+
+REQUIRED_ROUND_AUC = 0.6500
+
+RANDOM_STATE = 42
+
+SEEDS = [
+    42,
+    101,
+    777,
+    2024,
+    999
+]
+
+OOF_FOLDS = 5
+
+
+print("=" * 60)
+print(EXPERIMENT_NAME)
+print("=" * 60)
+
+print()
+print(f"Required Round {ROUND_NUMBER} ROC-AUC: >= {REQUIRED_ROUND_AUC:.4f}")
+print()
+
+
+# ============================================================
+# 1. DIRECTORY DISCOVERY
 # ============================================================
 
 CURRENT_DIR = Path.cwd()
 
 DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
+
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
+ROUND_DIR = CURRENT_DIR / "round_testing"
+
+if not ROUND_DIR.exists():
+    ROUND_DIR = DATA_DIR / "round_testing"
+
+
+print("=" * 60)
+print("DIRECTORIES")
+print("=" * 60)
+
+print(f"Current directory : {CURRENT_DIR}")
+print(f"Dataset directory: {DATA_DIR}")
+print(f"Round directory  : {ROUND_DIR}")
+
+print()
+
 
 # ============================================================
-# 2. FEATURE EXTRACTION & DOMAIN PARSERS
+# 2. BASIC CONFIGURATION
 # ============================================================
 
-target = "employed_status"
+TARGET = "employed_status"
+ID_COLUMN = "anonymised_id"
 
-def parse_matric_band(val):
-    """Converts matric banded percentage strings into continuous marks."""
-    if pd.isna(val):
+
+# ============================================================
+# 3. MATRIC PARSER
+# ============================================================
+
+def parse_matric_band(value):
+    """
+    Convert strings such as:
+
+        50 - 59 %
+        70 - 79 %
+        < 40 %
+        > 80 %
+
+    into approximate continuous values.
+    """
+
+    if pd.isna(value):
         return np.nan
-    s = str(val).replace("%", "").strip()
-    if "-" in s:
-        parts = s.split("-")
-        try:
-            return (float(parts[0]) + float(parts[1])) / 2.0
-        except Exception:
-            return np.nan
-    elif "<" in s:
-        try:
-            return float(s.replace("<", "").strip()) / 2.0
-        except Exception:
-            return np.nan
-    elif ">" in s:
-        try:
-            return float(s.replace(">", "").strip()) + 5.0
-        except Exception:
-            return np.nan
-    else:
-        try:
-            return float(s)
-        except Exception:
-            return np.nan
+
+    text = str(value).replace("%", "").strip()
+
+    try:
+
+        if "-" in text:
+
+            parts = text.split("-")
+
+            if len(parts) == 2:
+
+                low = float(parts[0].strip())
+                high = float(parts[1].strip())
+
+                return (low + high) / 2.0
+
+        if "<" in text:
+
+            number = float(
+                text.replace("<", "").strip()
+            )
+
+            return number / 2.0
+
+        if ">" in text:
+
+            number = float(
+                text.replace(">", "").strip()
+            )
+
+            return number + 5.0
+
+        return float(text)
+
+    except Exception:
+
+        return np.nan
 
 
-def prepare_base_features(df):
-    """Cleans IDs, dates, matric marks, and numeric lags."""
+# ============================================================
+# 4. GENERAL FEATURE CLEANING
+# ============================================================
+
+def base_feature_engineering(df):
+    """
+    Shared feature engineering.
+
+    This function intentionally does NOT use the target
+    except for cleaning the target column itself.
+    """
+
     data = df.copy()
 
-    if target in data.columns:
-        data[target] = pd.to_numeric(data[target], errors="coerce")
-        data = data.dropna(subset=[target]).copy()
-        data[target] = data[target].astype(int)
+    # --------------------------------------------------------
+    # Target
+    # --------------------------------------------------------
 
-    if "anonymised_id" in data.columns:
-        data = data.drop(columns=["anonymised_id"])
+    if TARGET in data.columns:
+
+        data[TARGET] = pd.to_numeric(
+            data[TARGET],
+            errors="coerce"
+        )
+
+        data = data.dropna(
+            subset=[TARGET]
+        ).copy()
+
+        data[TARGET] = data[TARGET].astype(int)
+
+    # --------------------------------------------------------
+    # ID
+    # --------------------------------------------------------
+
+    if ID_COLUMN in data.columns:
+
+        data = data.drop(
+            columns=[ID_COLUMN]
+        )
+
+    # --------------------------------------------------------
+    # Date features
+    # --------------------------------------------------------
 
     if "survey_date" in data.columns:
-        data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
-        data["survey_year"] = data["survey_date"].dt.year
-        data["survey_month"] = data["survey_date"].dt.month
-        data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
-        data = data.drop(columns=["survey_date"])
 
-    data["is_first_time"] = data["employed_lag"].isna().astype(float)
-    data["employed_lag_num"] = data["employed_lag"].fillna(-1.0).astype(float)
-    data["tenure_lag_log"] = np.log1p(pd.to_numeric(data.get("tenure_lag", 0), errors="coerce").fillna(0).clip(lower=0))
-    data["days_since_obs_log"] = np.log1p(pd.to_numeric(data.get("days_since_last_obs", 0), errors="coerce").fillna(0).clip(lower=0))
+        date_values = pd.to_datetime(
+            data["survey_date"],
+            errors="coerce"
+        )
 
-    # Matric parsing
-    for m in ["matric_englishhome", "matric_englishadd", "matric_mathpure", "matric_physicalscience", "matric_mathlit"]:
-        if m in data.columns:
-            data[f"{m}_score"] = data[m].apply(parse_matric_band).fillna(-1.0)
+        data["survey_year"] = date_values.dt.year
+        data["survey_month"] = date_values.dt.month
+        data["survey_dayofyear"] = date_values.dt.dayofyear
+        data["survey_quarter"] = date_values.dt.quarter
 
-    data["school_quintile_num"] = pd.to_numeric(data.get("school_quintile", 0), errors="coerce").fillna(0.0)
-    data["work_readiness_num"] = pd.to_numeric(data.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
-    data["age_clean"] = pd.to_numeric(data.get("age", 22), errors="coerce").fillna(22.0).clip(18, 35)
+        data = data.drop(
+            columns=["survey_date"]
+        )
 
-    # Auto-convert numeric strings
-    for col in data.columns:
-        if col != target and data[col].dtype == "object":
-            converted = pd.to_numeric(data[col], errors="coerce")
-            if converted.notna().sum() > 0.6 * data[col].notna().sum():
-                data[col] = converted
+    # --------------------------------------------------------
+    # Labour-history features
+    # --------------------------------------------------------
+
+    if "employed_lag" in data.columns:
+
+        data["is_first_time"] = (
+            data["employed_lag"]
+            .isna()
+            .astype(float)
+        )
+
+        data["employed_lag_num"] = pd.to_numeric(
+            data["employed_lag"],
+            errors="coerce"
+        )
+
+    else:
+
+        data["is_first_time"] = 1.0
+        data["employed_lag_num"] = -1.0
+
+    if "tenure_lag" in data.columns:
+
+        tenure = pd.to_numeric(
+            data["tenure_lag"],
+            errors="coerce"
+        )
+
+        data["tenure_lag_log"] = np.log1p(
+            tenure.fillna(0).clip(lower=0)
+        )
+
+        data["tenure_lag_is_na"] = (
+            tenure.isna()
+            .astype(float)
+        )
+
+    else:
+
+        data["tenure_lag_log"] = 0.0
+        data["tenure_lag_is_na"] = 1.0
+
+    if "days_since_last_obs" in data.columns:
+
+        days = pd.to_numeric(
+            data["days_since_last_obs"],
+            errors="coerce"
+        )
+
+        data["days_since_obs_log"] = np.log1p(
+            days.fillna(0).clip(lower=0)
+        )
+
+        data["days_since_obs_is_na"] = (
+            days.isna()
+            .astype(float)
+        )
+
+    else:
+
+        data["days_since_obs_log"] = 0.0
+        data["days_since_obs_is_na"] = 1.0
+
+    # --------------------------------------------------------
+    # Matric variables
+    # --------------------------------------------------------
+
+    matric_columns = [
+        "matric_englishhome",
+        "matric_englishadd",
+        "matric_mathpure",
+        "matric_physicalscience",
+        "matric_mathlit"
+    ]
+
+    for column in matric_columns:
+
+        if column in data.columns:
+
+            data[f"{column}_score"] = (
+                data[column]
+                .apply(parse_matric_band)
+            )
+
+            data[f"{column}_is_na"] = (
+                data[column]
+                .isna()
+                .astype(float)
+            )
+
+    score_columns = [
+        f"{c}_score"
+        for c in matric_columns
+        if f"{c}_score" in data.columns
+    ]
+
+    if score_columns:
+
+        data["matric_subject_count"] = (
+            data[score_columns]
+            .notna()
+            .sum(axis=1)
+        )
+
+        data["matric_average"] = (
+            data[score_columns]
+            .mean(axis=1)
+        )
+
+        data["matric_average_is_na"] = (
+            data["matric_average"]
+            .isna()
+            .astype(float)
+        )
+
+        data["matric_best_score"] = (
+            data[score_columns]
+            .max(axis=1)
+        )
+
+    # --------------------------------------------------------
+    # School quintile
+    # --------------------------------------------------------
+
+    if "school_quintile" in data.columns:
+
+        data["school_quintile"] = pd.to_numeric(
+            data["school_quintile"],
+            errors="coerce"
+        )
+
+    # --------------------------------------------------------
+    # Work readiness
+    # --------------------------------------------------------
+
+    if "work_readiness_score" in data.columns:
+
+        work_ready = pd.to_numeric(
+            data["work_readiness_score"],
+            errors="coerce"
+        )
+
+        data["work_readiness_is_na"] = (
+            work_ready.isna()
+            .astype(float)
+        )
+
+        data["work_readiness_score"] = work_ready
+
+    # --------------------------------------------------------
+    # Tertiary record
+    # --------------------------------------------------------
+
+    if "institution_type" in data.columns:
+
+        data["has_tertiary_record"] = (
+            data["institution_type"]
+            .notna()
+            .astype(float)
+        )
+
+    # --------------------------------------------------------
+    # SETA
+    # --------------------------------------------------------
+
+    if "seta" in data.columns:
+
+        data["has_seta_record"] = (
+            data["seta"]
+            .notna()
+            .astype(float)
+        )
+
+    # --------------------------------------------------------
+    # Numeric conversion
+    # --------------------------------------------------------
+
+    for column in data.columns:
+
+        if column == TARGET:
+            continue
+
+        if data[column].dtype == "object":
+
+            converted = pd.to_numeric(
+                data[column],
+                errors="coerce"
+            )
+
+            non_missing_original = (
+                data[column]
+                .notna()
+                .sum()
+            )
+
+            non_missing_converted = (
+                converted
+                .notna()
+                .sum()
+            )
+
+            if (
+                non_missing_original > 0
+                and
+                non_missing_converted
+                >= 0.60 * non_missing_original
+            ):
+
+                data[column] = converted
 
     return data
 
 
 # ============================================================
-# 3. IN-FOLD MULTI-VIEW TRANSFORMER (ZERO TARGET LEAKAGE)
+# 5. SAFE COMMON FEATURE ALIGNMENT
 # ============================================================
 
-class InFoldMultiViewTransformer:
-    """
-    Fits SEM Factor Analysis and Supervised PLS strictly on the training fold,
-    then transforms train, validation, and test subsets to create 6 distinct views.
-    """
-    def __init__(self, random_state=42):
-        self.random_state = random_state
+def align_features(train_df, test_df):
 
-    def fit_transform_views(self, X_train, y_train, X_val, X_test, num_cols, cat_cols):
-        # 1. Base Preprocessors
-        preproc_std = ColumnTransformer([
-            ("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("scl", StandardScaler())]), num_cols),
-            ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), cat_cols)
-        ])
+    common = [
+        column
+        for column in train_df.columns
+        if column in test_df.columns
+        and column != TARGET
+    ]
 
-        X_tr_raw = preproc_std.fit_transform(X_train)
-        X_va_raw = preproc_std.transform(X_val)
-        X_te_raw = preproc_std.transform(X_test)
+    train_x = train_df[common].copy()
+    test_x = test_df[common].copy()
 
-        # ------------------------------------------------------------
-        # View 1: Raw Representation
-        # ------------------------------------------------------------
-        view_raw = (X_tr_raw, X_va_raw, X_te_raw)
+    # --------------------------------------------------------
+    # Remove very high-cardinality categorical columns.
+    # --------------------------------------------------------
 
-        # ------------------------------------------------------------
-        # View 2: SEM / Unsupervised Factor Analysis (Fitted in-fold)
-        # ------------------------------------------------------------
-        acad_cols = [c for c in num_cols if "_score" in c]
-        lab_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
-        soc_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
+    categorical = train_x.select_dtypes(
+        include=["object", "category", "bool"]
+    ).columns.tolist()
 
-        imp_num = SimpleImputer(strategy="median")
-        scl_num = StandardScaler()
-        X_tr_num = scl_num.fit_transform(imp_num.fit_transform(X_train[num_cols]))
-        X_va_num = scl_num.transform(imp_num.transform(X_val[num_cols]))
-        X_te_num = scl_num.transform(imp_num.transform(X_test[num_cols]))
+    high_cardinality = [
+        column
+        for column in categorical
+        if train_x[column]
+        .nunique(dropna=True) > 100
+    ]
 
-        fa_acad = FactorAnalysis(n_components=2, random_state=self.random_state)
-        fa_lab = FactorAnalysis(n_components=2, random_state=self.random_state)
-        fa_soc = FactorAnalysis(n_components=2, random_state=self.random_state)
+    if high_cardinality:
 
-        # Extract in-fold factor indices
-        acad_idx = [num_cols.index(c) for c in acad_cols if c in num_cols]
-        lab_idx = [num_cols.index(c) for c in lab_cols if c in num_cols]
-        soc_idx = [num_cols.index(c) for c in soc_cols if c in num_cols]
+        print(
+            "Dropping high-cardinality columns:",
+            high_cardinality
+        )
 
-        f_ac_tr = fa_acad.fit_transform(X_tr_num[:, acad_idx])
-        f_ac_va = fa_acad.transform(X_va_num[:, acad_idx])
-        f_ac_te = fa_acad.transform(X_te_num[:, acad_idx])
+        train_x = train_x.drop(
+            columns=high_cardinality
+        )
 
-        f_lb_tr = fa_lab.fit_transform(X_tr_num[:, lab_idx])
-        f_lb_va = fa_lab.transform(X_va_num[:, lab_idx])
-        f_lb_te = fa_lab.transform(X_te_num[:, lab_idx])
+        test_x = test_x.drop(
+            columns=high_cardinality
+        )
 
-        f_sc_tr = fa_soc.fit_transform(X_tr_num[:, soc_idx])
-        f_sc_va = fa_soc.transform(X_va_num[:, soc_idx])
-        f_sc_te = fa_soc.transform(X_te_num[:, soc_idx])
+    return train_x, test_x
 
-        X_tr_sem = np.hstack([f_ac_tr, f_lb_tr, f_sc_tr])
-        X_va_sem = np.hstack([f_ac_va, f_lb_va, f_sc_va])
-        X_te_sem = np.hstack([f_ac_te, f_lb_te, f_sc_te])
-        view_sem = (X_tr_sem, X_va_sem, X_te_sem)
 
-        # ------------------------------------------------------------
-        # View 3: Supervised PLS Latent Projections (Fitted on train target only)
-        # ------------------------------------------------------------
-        pls = PLSRegression(n_components=3)
-        pls.fit(X_tr_num, y_train)
+# ============================================================
+# 6. PREPROCESSOR
+# ============================================================
 
-        X_tr_pls = pls.transform(X_tr_num)
-        X_va_pls = pls.transform(X_va_num)
-        X_te_pls = pls.transform(X_te_num)
-        view_pls = (X_tr_pls, X_va_pls, X_te_pls)
+def build_preprocessor(
+    numerical_columns,
+    categorical_columns,
+    quantile=False
+):
 
-        # ------------------------------------------------------------
-        # View 4: Combined Raw + SEM Latent Representation
-        # ------------------------------------------------------------
-        X_tr_comb = np.hstack([X_tr_raw, X_tr_sem, X_tr_pls])
-        X_va_comb = np.hstack([X_va_raw, X_va_sem, X_va_pls])
-        X_te_comb = np.hstack([X_te_raw, X_te_sem, X_te_pls])
-        view_comb = (X_tr_comb, X_va_comb, X_te_comb)
+    transformers = []
 
-        # ------------------------------------------------------------
-        # View 5: High-Leverage Interaction Features
-        # ------------------------------------------------------------
-        def make_interactions(df_orig):
-            d = pd.DataFrame(index=df_orig.index)
-            r = pd.to_numeric(df_orig.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
-            q = pd.to_numeric(df_orig.get("school_quintile", 0), errors="coerce").fillna(0)
-            d["inter_readiness_quintile"] = r * (q / 5.0)
-            emp = df_orig["employed_lag"].fillna(-1).astype(float)
-            ten = np.log1p(pd.to_numeric(df_orig.get("tenure_lag", 0), errors="coerce").fillna(0).clip(lower=0))
-            d["inter_emp_tenure"] = emp * ten
-            d["inter_stable_job"] = ((emp == 1) & (ten > 5.0)).astype(float)
-            return d.to_numpy()
+    # --------------------------------------------------------
+    # Numerical
+    # --------------------------------------------------------
 
-        inter_tr = make_interactions(X_train)
-        inter_va = make_interactions(X_val)
-        inter_te = make_interactions(X_test)
+    if numerical_columns:
 
-        X_tr_inter = np.hstack([X_tr_raw, inter_tr])
-        X_va_inter = np.hstack([X_va_raw, inter_va])
-        X_te_inter = np.hstack([X_te_raw, inter_te])
-        view_inter = (X_tr_inter, X_va_inter, X_te_inter)
+        if quantile:
 
-        # ------------------------------------------------------------
-        # View 6: Neural MLP Input (Standard Scaled Raw)
-        # ------------------------------------------------------------
-        view_mlp = view_raw
+            scaler = QuantileTransformer(
+                output_distribution="normal",
+                random_state=RANDOM_STATE
+            )
 
-        return {
-            "view_raw": view_raw,
-            "view_sem": view_sem,
-            "view_pls": view_pls,
-            "view_comb": view_comb,
-            "view_inter": view_inter,
-            "view_mlp": view_mlp
+        else:
+
+            scaler = StandardScaler()
+
+        numeric_pipeline = Pipeline(
+            steps=[
+                (
+                    "imputer",
+                    SimpleImputer(
+                        strategy="median"
+                    )
+                ),
+                (
+                    "scaler",
+                    scaler
+                )
+            ]
+        )
+
+        transformers.append(
+            (
+                "numeric",
+                numeric_pipeline,
+                numerical_columns
+            )
+        )
+
+    # --------------------------------------------------------
+    # Categorical
+    # --------------------------------------------------------
+
+    if categorical_columns:
+
+        categorical_pipeline = Pipeline(
+            steps=[
+                (
+                    "imputer",
+                    SimpleImputer(
+                        strategy="most_frequent"
+                    )
+                ),
+                (
+                    "onehot",
+                    OneHotEncoder(
+                        handle_unknown="ignore",
+                        sparse_output=False
+                    )
+                )
+            ]
+        )
+
+        transformers.append(
+            (
+                "categorical",
+                categorical_pipeline,
+                categorical_columns
+            )
+        )
+
+    return ColumnTransformer(
+        transformers=transformers
+    )
+
+
+# ============================================================
+# 7. CLASSIFICATION MODEL FACTORIES
+# ============================================================
+
+def raw_logistic():
+
+    return LogisticRegression(
+        C=0.08,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1500,
+        random_state=RANDOM_STATE
+    )
+
+
+def raw_elastic():
+
+    return LogisticRegression(
+        C=0.10,
+        penalty="elasticnet",
+        solver="saga",
+        l1_ratio=0.15,
+        max_iter=1500,
+        random_state=RANDOM_STATE
+    )
+
+
+def sem_logistic():
+
+    return LogisticRegression(
+        C=0.10,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1500,
+        random_state=RANDOM_STATE
+    )
+
+
+def combined_logistic():
+
+    return LogisticRegression(
+        C=0.07,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1500,
+        random_state=RANDOM_STATE
+    )
+
+
+def interaction_logistic():
+
+    return LogisticRegression(
+        C=0.05,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1500,
+        random_state=RANDOM_STATE
+    )
+
+
+def mlp_model(seed):
+
+    return MLPClassifier(
+        hidden_layer_sizes=(64, 32),
+        activation="relu",
+        solver="adam",
+        alpha=0.01,
+        batch_size=128,
+        learning_rate_init=0.001,
+        max_iter=350,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed
+    )
+
+
+# ============================================================
+# 8. SEM FEATURE GENERATION
+# ============================================================
+
+def build_sem_features(
+    train_df,
+    test_df
+):
+
+    train = train_df.copy()
+    test = test_df.copy()
+
+    # --------------------------------------------------------
+    # Academic block
+    # --------------------------------------------------------
+
+    academic_columns = [
+        c for c in train.columns
+        if "_score" in c
+    ]
+
+    if len(academic_columns) >= 2:
+
+        imputer = SimpleImputer(
+            strategy="median"
+        )
+
+        scaler = StandardScaler()
+
+        train_academic = scaler.fit_transform(
+            imputer.fit_transform(
+                train[academic_columns]
+            )
+        )
+
+        test_academic = scaler.transform(
+            imputer.transform(
+                test[academic_columns]
+            )
+        )
+
+        n_components = min(
+            2,
+            len(academic_columns)
+        )
+
+        fa = FactorAnalysis(
+            n_components=n_components,
+            random_state=RANDOM_STATE
+        )
+
+        train_factor = fa.fit_transform(
+            train_academic
+        )
+
+        test_factor = fa.transform(
+            test_academic
+        )
+
+        for i in range(n_components):
+
+            train[
+                f"latent_academic_{i+1}"
+            ] = train_factor[:, i]
+
+            test[
+                f"latent_academic_{i+1}"
+            ] = test_factor[:, i]
+
+    # --------------------------------------------------------
+    # Labour block
+    # --------------------------------------------------------
+
+    labour_columns = [
+        c
+        for c in [
+            "employed_lag_num",
+            "tenure_lag_log",
+            "days_since_obs_log",
+            "is_first_time"
+        ]
+        if c in train.columns
+    ]
+
+    if len(labour_columns) >= 2:
+
+        imputer = SimpleImputer(
+            strategy="median"
+        )
+
+        scaler = StandardScaler()
+
+        train_labour = scaler.fit_transform(
+            imputer.fit_transform(
+                train[labour_columns]
+            )
+        )
+
+        test_labour = scaler.transform(
+            imputer.transform(
+                test[labour_columns]
+            )
+        )
+
+        n_components = min(
+            2,
+            len(labour_columns)
+        )
+
+        fa = FactorAnalysis(
+            n_components=n_components,
+            random_state=RANDOM_STATE
+        )
+
+        train_factor = fa.fit_transform(
+            train_labour
+        )
+
+        test_factor = fa.transform(
+            test_labour
+        )
+
+        for i in range(n_components):
+
+            train[
+                f"latent_labour_{i+1}"
+            ] = train_factor[:, i]
+
+            test[
+                f"latent_labour_{i+1}"
+            ] = test_factor[:, i]
+
+    # --------------------------------------------------------
+    # Socioeconomic block
+    # --------------------------------------------------------
+
+    socio_columns = [
+        c
+        for c in [
+            "school_quintile",
+            "work_readiness_score",
+            "age"
+        ]
+        if c in train.columns
+    ]
+
+    if len(socio_columns) >= 2:
+
+        imputer = SimpleImputer(
+            strategy="median"
+        )
+
+        scaler = StandardScaler()
+
+        train_socio = scaler.fit_transform(
+            imputer.fit_transform(
+                train[socio_columns]
+            )
+        )
+
+        test_socio = scaler.transform(
+            imputer.transform(
+                test[socio_columns]
+            )
+        )
+
+        n_components = min(
+            2,
+            len(socio_columns)
+        )
+
+        fa = FactorAnalysis(
+            n_components=n_components,
+            random_state=RANDOM_STATE
+        )
+
+        train_factor = fa.fit_transform(
+            train_socio
+        )
+
+        test_factor = fa.transform(
+            test_socio
+        )
+
+        for i in range(n_components):
+
+            train[
+                f"latent_socio_{i+1}"
+            ] = train_factor[:, i]
+
+            test[
+                f"latent_socio_{i+1}"
+            ] = test_factor[:, i]
+
+    # --------------------------------------------------------
+    # Supervised PLS block
+    #
+    # IMPORTANT:
+    # This is fitted using TRAIN ONLY.
+    # --------------------------------------------------------
+
+    pls_columns = []
+
+    for column in [
+        *academic_columns,
+        *labour_columns,
+        *socio_columns
+    ]:
+
+        if column in train.columns:
+            pls_columns.append(column)
+
+    pls_columns = list(dict.fromkeys(pls_columns))
+
+    if (
+        len(pls_columns) >= 3
+        and TARGET in train.columns
+    ):
+
+        imputer = SimpleImputer(
+            strategy="median"
+        )
+
+        train_pls = imputer.fit_transform(
+            train[pls_columns]
+        )
+
+        test_pls = imputer.transform(
+            test[pls_columns]
+        )
+
+        n_components = min(
+            2,
+            len(pls_columns) - 1,
+            len(train) - 1
+        )
+
+        if n_components >= 1:
+
+            pls = PLSRegression(
+                n_components=n_components,
+                scale=True,
+                max_iter=500
+            )
+
+            pls.fit(
+                train_pls,
+                train[TARGET].values
+            )
+
+            train_latent = pls.transform(
+                train_pls
+            )
+
+            test_latent = pls.transform(
+                test_pls
+            )
+
+            for i in range(n_components):
+
+                train[
+                    f"pls_latent_{i+1}"
+                ] = train_latent[:, i]
+
+                test[
+                    f"pls_latent_{i+1}"
+                ] = test_latent[:, i]
+
+    return train, test
+
+
+# ============================================================
+# 9. BUILD SEM DATASET
+# ============================================================
+
+def prepare_sem_dataset(
+    train_df,
+    test_df
+):
+
+    train_sem, test_sem = build_sem_features(
+        train_df,
+        test_df
+    )
+
+    train_x, test_x = align_features(
+        train_sem,
+        test_sem
+    )
+
+    return (
+        train_x,
+        test_x,
+        train_sem[TARGET].reset_index(drop=True)
+    )
+
+
+# ============================================================
+# 10. PREPARE RAW DATA
+# ============================================================
+
+print("=" * 60)
+print("LOADING ROUND 8")
+print("=" * 60)
+
+
+ROUND_8_DIR = ROUND_DIR / "round_8"
+
+
+if not ROUND_8_DIR.exists():
+
+    raise RuntimeError(
+        f"Round 8 directory does not exist:\n"
+        f"{ROUND_8_DIR}"
+    )
+
+
+# ------------------------------------------------------------
+# IMPORTANT:
+#
+# Your actual files are:
+#
+#     rounds_1_7.csv
+#     round_8.csv
+#
+# We explicitly use those names.
+# ------------------------------------------------------------
+
+round_train_file = (
+    ROUND_8_DIR / "rounds_1_7.csv"
+)
+
+round_test_file = (
+    ROUND_8_DIR / "round_8.csv"
+)
+
+
+if not round_train_file.exists():
+
+    raise RuntimeError(
+        f"Missing Round 8 training file:\n"
+        f"{round_train_file}"
+    )
+
+
+if not round_test_file.exists():
+
+    raise RuntimeError(
+        f"Missing Round 8 validation file:\n"
+        f"{round_test_file}"
+    )
+
+
+print(
+    f"Round training file: {round_train_file}"
+)
+
+print(
+    f"Round validation file: {round_test_file}"
+)
+
+print()
+
+
+round_train_raw = pd.read_csv(
+    round_train_file
+)
+
+round_test_raw = pd.read_csv(
+    round_test_file
+)
+
+
+print(
+    f"Round train rows: {len(round_train_raw)}"
+)
+
+print(
+    f"Round 8 rows     : {len(round_test_raw)}"
+)
+
+print()
+
+
+if TARGET not in round_train_raw.columns:
+
+    raise RuntimeError(
+        f"{TARGET} is missing from Round training data."
+    )
+
+
+if TARGET not in round_test_raw.columns:
+
+    raise RuntimeError(
+        f"{TARGET} is missing from Round 8 validation data."
+    )
+
+
+# ============================================================
+# 11. CLEAN ROUND DATA
+# ============================================================
+
+round_train_clean = base_feature_engineering(
+    round_train_raw
+)
+
+round_test_clean = base_feature_engineering(
+    round_test_raw
+)
+
+
+# ============================================================
+# 12. ALIGN RAW MANIFOLD
+# ============================================================
+
+X_round_raw, X_round8_raw = align_features(
+    round_train_clean,
+    round_test_clean
+)
+
+y_round = (
+    round_train_clean[TARGET]
+    .reset_index(drop=True)
+)
+
+y_round8 = (
+    round_test_clean[TARGET]
+    .reset_index(drop=True)
+)
+
+
+print(
+    f"Raw manifold: {X_round_raw.shape[1]} features"
+)
+
+print()
+
+
+# ============================================================
+# 13. ALIGN SEM MANIFOLD
+# ============================================================
+
+print("=" * 60)
+print("CONSTRUCTING SEM MANIFOLD")
+print("=" * 60)
+
+
+X_round_sem, X_round8_sem, y_sem = (
+    prepare_sem_dataset(
+        round_train_clean,
+        round_test_clean
+    )
+)
+
+
+print(
+    f"SEM manifold: {X_round_sem.shape[1]} features"
+)
+
+print()
+
+
+# ============================================================
+# 14. FEATURE TYPE DISCOVERY
+# ============================================================
+
+def get_feature_types(X):
+
+    categorical = X.select_dtypes(
+        include=[
+            "object",
+            "category",
+            "bool"
+        ]
+    ).columns.tolist()
+
+    numerical = X.select_dtypes(
+        include=[np.number]
+    ).columns.tolist()
+
+    return numerical, categorical
+
+
+# ============================================================
+# 15. FIT RAW LOGISTIC
+# ============================================================
+
+def fit_raw_logistic(
+    X_train,
+    y_train,
+    X_test
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=False
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                raw_logistic()
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 16. FIT RAW ELASTICNET
+# ============================================================
+
+def fit_raw_elastic(
+    X_train,
+    y_train,
+    X_test
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=False
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                raw_elastic()
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 17. FIT SEM LOGISTIC
+# ============================================================
+
+def fit_sem_logistic(
+    X_train,
+    y_train,
+    X_test
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=True
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                sem_logistic()
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 18. CREATE COMBINED MANIFOLD
+# ============================================================
+
+def create_combined_manifold(
+    raw_train,
+    raw_test,
+    sem_train,
+    sem_test
+):
+
+    combined_train = raw_train.copy()
+    combined_test = raw_test.copy()
+
+    sem_only_columns = [
+        c
+        for c in sem_train.columns
+        if (
+            c.startswith("latent_")
+            or c.startswith("pls_latent_")
+        )
+    ]
+
+    for column in sem_only_columns:
+
+        if column in sem_train.columns:
+
+            combined_train[column] = (
+                sem_train[column].values
+            )
+
+            combined_test[column] = (
+                sem_test[column].values
+            )
+
+    return combined_train, combined_test
+
+
+X_round_combined, X_round8_combined = (
+    create_combined_manifold(
+        X_round_raw,
+        X_round8_raw,
+        X_round_sem,
+        X_round8_sem
+    )
+)
+
+
+print(
+    f"Combined manifold: "
+    f"{X_round_combined.shape[1]} features"
+)
+
+
+# ============================================================
+# 19. COMBINED LOGISTIC
+# ============================================================
+
+def fit_combined_logistic(
+    X_train,
+    y_train,
+    X_test
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=False
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                combined_logistic()
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 20. INTERACTION MANIFOLD
+# ============================================================
+
+def create_interaction_manifold(
+    train_df,
+    test_df
+):
+
+    train = train_df.copy()
+    test = test_df.copy()
+
+    important_pairs = [
+        (
+            "is_first_time",
+            "employed_lag_num"
+        ),
+        (
+            "employed_lag_num",
+            "tenure_lag_log"
+        ),
+        (
+            "employed_lag_num",
+            "days_since_obs_log"
+        ),
+        (
+            "tenure_lag_log",
+            "days_since_obs_log"
+        ),
+        (
+            "work_readiness_score",
+            "school_quintile"
+        ),
+        (
+            "age",
+            "work_readiness_score"
+        ),
+        (
+            "matric_average",
+            "work_readiness_score"
+        ),
+        (
+            "matric_average",
+            "school_quintile"
+        )
+    ]
+
+    for left, right in important_pairs:
+
+        if (
+            left in train.columns
+            and right in train.columns
+        ):
+
+            train[
+                f"interaction_{left}_{right}"
+            ] = (
+                pd.to_numeric(
+                    train[left],
+                    errors="coerce"
+                )
+                *
+                pd.to_numeric(
+                    train[right],
+                    errors="coerce"
+                )
+            )
+
+            test[
+                f"interaction_{left}_{right}"
+            ] = (
+                pd.to_numeric(
+                    test[left],
+                    errors="coerce"
+                )
+                *
+                pd.to_numeric(
+                    test[right],
+                    errors="coerce"
+                )
+            )
+
+    return train, test
+
+
+X_round_interaction, X_round8_interaction = (
+    create_interaction_manifold(
+        X_round_combined,
+        X_round8_combined
+    )
+)
+
+
+# ============================================================
+# 21. INTERACTION LOGISTIC
+# ============================================================
+
+def fit_interaction_logistic(
+    X_train,
+    y_train,
+    X_test
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=True
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                interaction_logistic()
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 22. MLP
+# ============================================================
+
+def fit_mlp(
+    X_train,
+    y_train,
+    X_test,
+    seed=42
+):
+
+    num_cols, cat_cols = get_feature_types(
+        X_train
+    )
+
+    preprocessor = build_preprocessor(
+        num_cols,
+        cat_cols,
+        quantile=True
+    )
+
+    pipe = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                mlp_model(seed)
+            )
+        ]
+    )
+
+    pipe.fit(
+        X_train,
+        y_train
+    )
+
+    return pipe.predict_proba(
+        X_test
+    )[:, 1]
+
+
+# ============================================================
+# 23. ROUND 8 MODEL TOURNAMENT
+# ============================================================
+
+print()
+print("=" * 60)
+print("ROUND 8 MODEL TOURNAMENT")
+print("=" * 60)
+
+print()
+print(
+    f"HARD GATE: ROC-AUC >= {REQUIRED_ROUND_AUC:.4f}"
+)
+print()
+
+
+round_predictions = {}
+round_scores = {}
+
+
+# ------------------------------------------------------------
+# MODEL A — RAW LOGISTIC
+# ------------------------------------------------------------
+
+print("Testing Raw Logistic...")
+
+pred = fit_raw_logistic(
+    X_round_raw,
+    y_round,
+    X_round8_raw
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["Raw_Logistic"] = pred
+round_scores["Raw_Logistic"] = score
+
+print(
+    f"Raw Logistic                  : {score:.6f}"
+)
+
+
+# ------------------------------------------------------------
+# MODEL B — RAW ELASTICNET
+# ------------------------------------------------------------
+
+print("Testing Raw ElasticNet...")
+
+pred = fit_raw_elastic(
+    X_round_raw,
+    y_round,
+    X_round8_raw
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["Raw_ElasticNet"] = pred
+round_scores["Raw_ElasticNet"] = score
+
+print(
+    f"Raw ElasticNet                : {score:.6f}"
+)
+
+
+# ------------------------------------------------------------
+# MODEL C — SEM LATENT
+# ------------------------------------------------------------
+
+print("Testing SEM Latent Logistic...")
+
+pred = fit_sem_logistic(
+    X_round_sem,
+    y_sem,
+    X_round8_sem
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["SEM_Logistic"] = pred
+round_scores["SEM_Logistic"] = score
+
+print(
+    f"SEM Latent Logistic           : {score:.6f}"
+)
+
+
+# ------------------------------------------------------------
+# MODEL D — RAW + SEM
+# ------------------------------------------------------------
+
+print("Testing Raw + SEM Logistic...")
+
+pred = fit_combined_logistic(
+    X_round_combined,
+    y_round,
+    X_round8_combined
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["Raw_SEM_Logistic"] = pred
+round_scores["Raw_SEM_Logistic"] = score
+
+print(
+    f"Raw + SEM Logistic             : {score:.6f}"
+)
+
+
+# ------------------------------------------------------------
+# MODEL E — INTERACTION
+# ------------------------------------------------------------
+
+print("Testing Raw + SEM Interaction Logistic...")
+
+pred = fit_interaction_logistic(
+    X_round_interaction,
+    y_round,
+    X_round8_interaction
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["Interaction_Logistic"] = pred
+round_scores["Interaction_Logistic"] = score
+
+print(
+    f"Raw + SEM Interaction         : {score:.6f}"
+)
+
+
+# ------------------------------------------------------------
+# MODEL F — MLP
+# ------------------------------------------------------------
+
+print("Testing Combined MLP...")
+
+pred = fit_mlp(
+    X_round_combined,
+    y_round,
+    X_round8_combined,
+    seed=42
+)
+
+score = roc_auc_score(
+    y_round8,
+    pred
+)
+
+round_predictions["Combined_MLP"] = pred
+round_scores["Combined_MLP"] = score
+
+print(
+    f"Combined MLP                  : {score:.6f}"
+)
+
+
+# ============================================================
+# 24. TOURNAMENT TABLE
+# ============================================================
+
+tournament = pd.DataFrame(
+    [
+        {
+            "Model": name,
+            "Round_8_AUC": score,
+            "PASS": score >= REQUIRED_ROUND_AUC
         }
+        for name, score
+        in round_scores.items()
+    ]
+)
+
+tournament = tournament.sort_values(
+    "Round_8_AUC",
+    ascending=False
+).reset_index(drop=True)
+
+
+print()
+print("=" * 60)
+print("ROUND 8 LEADERBOARD")
+print("=" * 60)
+
+print(
+    tournament.to_string(
+        index=False
+    )
+)
 
 
 # ============================================================
-# 4. LOAD & PREPARE DATASET
+# 25. HARD GATE
 # ============================================================
 
-print("\n============================================")
-print("LOADING DATASET")
-print("============================================")
-
-train_raw = pd.read_csv(DATA_DIR / "train.csv")
-test_raw = pd.read_csv(DATA_DIR / "test.csv")
-test_ids = test_raw["anonymised_id"].copy()
-
-train_clean = prepare_base_features(train_raw)
-test_clean = prepare_base_features(test_raw)
-
-common_cols = [c for c in train_clean.columns if c in test_clean.columns and c != target]
-
-y = train_clean[target].reset_index(drop=True)
-X = train_clean[common_cols].reset_index(drop=True)
-X_test = test_clean[common_cols].reset_index(drop=True)
-
-# Drop high-cardinality categorical (>100)
-cat_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-high_card = [c for c in cat_cols if X[c].nunique(dropna=True) > 100]
-if high_card:
-    X = X.drop(columns=high_card)
-    X_test = X_test.drop(columns=high_card)
-
-cat_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-
-print(f"Training observations: {len(X)} | Testing observations: {len(X_test)}")
-print(f"Features: {len(num_cols)} numerical, {len(cat_cols)} categorical")
+passing_models = [
+    name
+    for name, score
+    in round_scores.items()
+    if score >= REQUIRED_ROUND_AUC
+]
 
 
-# ============================================================
-# 5. 5-FOLD LEAK-FREE OOF MULTI-VIEW STACKING
-# ============================================================
+print()
+print("=" * 60)
+print("ROUND 8 HARD GATE")
+print("=" * 60)
 
-print("\n============================================")
-print("RUNNING 5-FOLD LEAK-FREE MULTI-VIEW STACKING")
-print("============================================")
+print(
+    f"Required AUC : {REQUIRED_ROUND_AUC:.4f}"
+)
 
-N_SPLITS = 5
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+print(
+    f"Passing models: {len(passing_models)}"
+)
 
-# 6 Views: [Raw, SEM, PLS, Combined, Interaction, MLP]
-view_names = ["Raw Linear", "SEM Factor", "PLS Latent", "Raw+SEM Comb", "Interactions", "Neural MLP"]
-N_VIEWS = len(view_names)
+for model_name in passing_models:
 
-oof_matrix = np.zeros((len(X), N_VIEWS))
-test_fold_preds = np.zeros((len(X_test), N_VIEWS, N_SPLITS))
+    print(
+        f"  PASS -> {model_name}: "
+        f"{round_scores[model_name]:.6f}"
+    )
 
-transformer = InFoldMultiViewTransformer(random_state=42)
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X.iloc[train_idx].copy(), y.iloc[train_idx].copy()
-    X_va_f, y_va_f = X.iloc[val_idx].copy(), y.iloc[val_idx].copy()
+# ------------------------------------------------------------
+# CRITICAL SAFETY STOP
+# ------------------------------------------------------------
 
-    # In-fold transformation (zero target leakage)
-    views = transformer.fit_transform_views(X_tr_f, y_tr_f, X_va_f, X_test, num_cols, cat_cols)
+if len(passing_models) == 0:
 
-    # 1. Model for View 1 (Raw)
-    m1 = LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42 + fold)
-    m1.fit(views["view_raw"][0], y_tr_f)
-    p1_va = m1.predict_proba(views["view_raw"][1])[:, 1]
-    p1_te = m1.predict_proba(views["view_raw"][2])[:, 1]
+    print()
+    print("=" * 60)
+    print("❌ EXPERIMENT STOPPED")
+    print("=" * 60)
 
-    # 2. Model for View 2 (SEM)
-    m2 = LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42 + fold)
-    m2.fit(views["view_sem"][0], y_tr_f)
-    p2_va = m2.predict_proba(views["view_sem"][1])[:, 1]
-    p2_te = m2.predict_proba(views["view_sem"][2])[:, 1]
+    print()
+    print(
+        "NO MODEL REACHED THE REQUIRED "
+        f"ROUND 8 AUC OF {REQUIRED_ROUND_AUC:.4f}."
+    )
 
-    # 3. Model for View 3 (PLS)
-    m3 = LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42 + fold)
-    m3.fit(views["view_pls"][0], y_tr_f)
-    p3_va = m3.predict_proba(views["view_pls"][1])[:, 1]
-    p3_te = m3.predict_proba(views["view_pls"][2])[:, 1]
+    print()
+    print(
+        "The full dataset WILL NOT be used."
+    )
 
-    # 4. Model for View 4 (Combined)
-    m4 = LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=42 + fold)
-    m4.fit(views["view_comb"][0], y_tr_f)
-    p4_va = m4.predict_proba(views["view_comb"][1])[:, 1]
-    p4_te = m4.predict_proba(views["view_comb"][2])[:, 1]
+    print()
+    print(
+        "Improve the model and rerun."
+    )
 
-    # 5. Model for View 5 (Interactions)
-    m5 = LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42 + fold)
-    m5.fit(views["view_inter"][0], y_tr_f)
-    p5_va = m5.predict_proba(views["view_inter"][1])[:, 1]
-    p5_te = m5.predict_proba(views["view_inter"][2])[:, 1]
-
-    # 6. Model for View 6 (Neural MLP)
-    m6 = MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                       batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                       n_iter_no_change=20, validation_fraction=0.15, random_state=42 + fold)
-    m6.fit(views["view_mlp"][0], y_tr_f)
-    p6_va = m6.predict_proba(views["view_mlp"][1])[:, 1]
-    p6_te = m6.predict_proba(views["view_mlp"][2])[:, 1]
-
-    # Store OOF predictions
-    fold_val_preds = [p1_va, p2_va, p3_va, p4_va, p5_va, p6_va]
-    fold_test_preds = [p1_te, p2_te, p3_te, p4_te, p5_te, p6_te]
-
-    for v_idx in range(N_VIEWS):
-        oof_matrix[val_idx, v_idx] = fold_val_preds[v_idx]
-        test_fold_preds[:, v_idx, fold] = fold_test_preds[v_idx]
-
-    fold_scores = [roc_auc_score(y_va_f, fold_val_preds[v]) for v in range(N_VIEWS)]
-    print(f"Fold {fold + 1} AUCs: Raw={fold_scores[0]:.4f} | SEM={fold_scores[1]:.4f} | PLS={fold_scores[2]:.4f} | Comb={fold_scores[3]:.4f} | Inter={fold_scores[4]:.4f} | MLP={fold_scores[5]:.4f}")
+    raise SystemExit(
+        "ROUND 8 GATE FAILED."
+    )
 
 
 # ============================================================
-# 6. OOF EVALUATION OF INDIVIDUAL VIEWS
+# 26. OOF STACKING ENGINE
 # ============================================================
 
-print("\n============================================")
-print("INDIVIDUAL VIEW OUT-OF-FOLD (OOF) SCORES")
-print("============================================")
+print()
+print("=" * 60)
+print("BUILDING OOF STACKING FEATURES")
+print("=" * 60)
 
-for v_idx, name in enumerate(view_names):
-    score = roc_auc_score(y, oof_matrix[:, v_idx])
-    print(f"View {v_idx + 1} ({name:<16}): OOF ROC-AUC = {score:.5f}")
+print()
+print(
+    "Passing models:"
+)
+
+for model_name in passing_models:
+
+    print(
+        f"  - {model_name}"
+    )
+
+print()
+
+
+# ------------------------------------------------------------
+# We create OOF predictions for each passing architecture.
+#
+# The important part is that each training prediction is made
+# by a model that DID NOT train on that observation.
+#
+# This gives the meta-classifier a realistic training signal.
+# ------------------------------------------------------------
+
+def generate_oof_predictions(
+    model_name,
+    X_raw,
+    X_sem,
+    X_combined,
+    X_interaction,
+    y,
+    folds=5
+):
+
+    oof = np.zeros(
+        len(y),
+        dtype=float
+    )
+
+    skf = StratifiedKFold(
+        n_splits=folds,
+        shuffle=True,
+        random_state=RANDOM_STATE
+    )
+
+    for fold_number, (
+        train_idx,
+        valid_idx
+    ) in enumerate(
+        skf.split(
+            X_raw,
+            y
+        ),
+        start=1
+    ):
+
+        print(
+            f"    {model_name} "
+            f"fold {fold_number}/{folds}"
+        )
+
+        y_train = y.iloc[
+            train_idx
+        ]
+
+        # ----------------------------------------------------
+        # RAW LOGISTIC
+        # ----------------------------------------------------
+
+        if model_name == "Raw_Logistic":
+
+            Xtr = X_raw.iloc[
+                train_idx
+            ]
+
+            Xva = X_raw.iloc[
+                valid_idx
+            ]
+
+            oof[valid_idx] = fit_raw_logistic(
+                Xtr,
+                y_train,
+                Xva
+            )
+
+        # ----------------------------------------------------
+        # RAW ELASTIC
+        # ----------------------------------------------------
+
+        elif model_name == "Raw_ElasticNet":
+
+            Xtr = X_raw.iloc[
+                train_idx
+            ]
+
+            Xva = X_raw.iloc[
+                valid_idx
+            ]
+
+            oof[valid_idx] = fit_raw_elastic(
+                Xtr,
+                y_train,
+                Xva
+            )
+
+        # ----------------------------------------------------
+        # SEM
+        #
+        # IMPORTANT:
+        # Rebuild SEM within each fold so that PLS does not
+        # see validation targets.
+        # ----------------------------------------------------
+
+        elif model_name == "SEM_Logistic":
+
+            raw_train_fold = (
+                round_train_clean
+                .iloc[train_idx]
+                .copy()
+            )
+
+            raw_valid_fold = (
+                round_train_clean
+                .iloc[valid_idx]
+                .copy()
+            )
+
+            sem_tr, sem_va = (
+                build_sem_features(
+                    raw_train_fold,
+                    raw_valid_fold
+                )
+            )
+
+            sem_train_x, sem_valid_x = (
+                align_features(
+                    sem_tr,
+                    sem_va
+                )
+            )
+
+            oof[valid_idx] = fit_sem_logistic(
+                sem_train_x,
+                y_train,
+                sem_valid_x
+            )
+
+        # ----------------------------------------------------
+        # RAW + SEM
+        # ----------------------------------------------------
+
+        elif model_name == "Raw_SEM_Logistic":
+
+            raw_train_fold = (
+                round_train_clean
+                .iloc[train_idx]
+                .copy()
+            )
+
+            raw_valid_fold = (
+                round_train_clean
+                .iloc[valid_idx]
+                .copy()
+            )
+
+            sem_tr, sem_va = (
+                build_sem_features(
+                    raw_train_fold,
+                    raw_valid_fold
+                )
+            )
+
+            raw_tr, raw_va = align_features(
+                raw_train_fold,
+                raw_valid_fold
+            )
+
+            sem_tr_x, sem_va_x = align_features(
+                sem_tr,
+                sem_va
+            )
+
+            comb_tr, comb_va = (
+                create_combined_manifold(
+                    raw_tr,
+                    raw_va,
+                    sem_tr_x,
+                    sem_va_x
+                )
+            )
+
+            oof[valid_idx] = fit_combined_logistic(
+                comb_tr,
+                y_train,
+                comb_va
+            )
+
+        # ----------------------------------------------------
+        # INTERACTION
+        # ----------------------------------------------------
+
+        elif model_name == "Interaction_Logistic":
+
+            raw_train_fold = (
+                round_train_clean
+                .iloc[train_idx]
+                .copy()
+            )
+
+            raw_valid_fold = (
+                round_train_clean
+                .iloc[valid_idx]
+                .copy()
+            )
+
+            sem_tr, sem_va = (
+                build_sem_features(
+                    raw_train_fold,
+                    raw_valid_fold
+                )
+            )
+
+            raw_tr, raw_va = align_features(
+                raw_train_fold,
+                raw_valid_fold
+            )
+
+            sem_tr_x, sem_va_x = align_features(
+                sem_tr,
+                sem_va
+            )
+
+            comb_tr, comb_va = (
+                create_combined_manifold(
+                    raw_tr,
+                    raw_va,
+                    sem_tr_x,
+                    sem_va_x
+                )
+            )
+
+            int_tr, int_va = (
+                create_interaction_manifold(
+                    comb_tr,
+                    comb_va
+                )
+            )
+
+            oof[valid_idx] = (
+                fit_interaction_logistic(
+                    int_tr,
+                    y_train,
+                    int_va
+                )
+            )
+
+        # ----------------------------------------------------
+        # MLP
+        # ----------------------------------------------------
+
+        elif model_name == "Combined_MLP":
+
+            Xtr = X_combined.iloc[
+                train_idx
+            ]
+
+            Xva = X_combined.iloc[
+                valid_idx
+            ]
+
+            oof[valid_idx] = fit_mlp(
+                Xtr,
+                y_train,
+                Xva,
+                seed=RANDOM_STATE
+            )
+
+        else:
+
+            raise ValueError(
+                f"Unknown model: {model_name}"
+            )
+
+    return oof
 
 
 # ============================================================
-# 7. TRAIN META-LEARNER ON UNBIASED OOF FEATURES
+# 27. CREATE OOF MATRIX
 # ============================================================
 
-print("\n============================================")
-print("TRAINING REGULARIZED META-LEARNER ON OOF STACK")
-print("============================================")
+oof_columns = []
 
-# Convert OOF probabilities to log-odds (logit space) for linear meta-learner
-oof_logits = np.zeros_like(oof_matrix)
-for v in range(N_VIEWS):
-    p_cl = np.clip(oof_matrix[:, v], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, v] = np.log(p_cl / (1.0 - p_cl))
+for model_name in passing_models:
 
-meta_learner = LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42)
-meta_learner.fit(oof_logits, y)
+    print()
+    print(
+        f"Generating OOF predictions: "
+        f"{model_name}"
+    )
 
-# Meta-learner evaluation on OOF
-oof_stack_probs = meta_learner.predict_proba(oof_logits)[:, 1]
-stacked_oof_auc = roc_auc_score(y, oof_stack_probs)
+    oof_prediction = generate_oof_predictions(
+        model_name=model_name,
+        X_raw=X_round_raw,
+        X_sem=X_round_sem,
+        X_combined=X_round_combined,
+        X_interaction=X_round_interaction,
+        y=y_round,
+        folds=OOF_FOLDS
+    )
 
-print(f"🏆 Meta-Learner Stacked OOF ROC-AUC : {stacked_oof_auc:.5f}")
-print(f"Learned View Weights (Coefficients):\n{pd.Series(meta_learner.coef_[0], index=view_names).to_string()}")
-
-
-# ============================================================
-# 8. TEST PREDICTION INFERENCE
-# ============================================================
-
-# Average fold test predictions per view, then convert to logit space
-avg_test_preds = test_fold_preds.mean(axis=2)
-test_logits = np.zeros_like(avg_test_preds)
-
-for v in range(N_VIEWS):
-    p_cl = np.clip(avg_test_preds[:, v], 1e-6, 1.0 - 1e-6)
-    test_logits[:, v] = np.log(p_cl / (1.0 - p_cl))
-
-final_probabilities = meta_learner.predict_proba(test_logits)[:, 1]
+    oof_columns.append(
+        oof_prediction
+    )
 
 
-# ============================================================
-# 9. VALIDATE & SAVE SUBMISSION FILE
-# ============================================================
+oof_matrix = np.column_stack(
+    oof_columns
+)
 
-if len(final_probabilities) != len(test_raw):
-    raise ValueError("Prediction count does not match test data.")
-if np.isnan(final_probabilities).any():
-    raise ValueError("Predictions contain NaN.")
-if (final_probabilities < 0).any() or (final_probabilities > 1).any():
-    raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp62_multi_view_leak_free_stacking.csv"
-
-submission = pd.DataFrame({
-    "anonymised_id": test_ids,
-    "employed_status": final_probabilities
-})
-
-submission.to_csv(output_file, index=False)
+print()
+print(
+    f"OOF matrix shape: "
+    f"{oof_matrix.shape}"
+)
 
 
 # ============================================================
-# 10. SUMMARY & BENCHMARKS
+# 28. TRAIN META CLASSIFIER
 # ============================================================
 
-print("\n============================================")
+print()
+print("=" * 60)
+print("TRAINING META CLASSIFIER")
+print("=" * 60)
+
+
+# ------------------------------------------------------------
+# Convert base probabilities to log-odds.
+#
+# This lets the meta-classifier work with the confidence
+# structure of the individual models rather than treating
+# probabilities as simple raw numbers.
+# ------------------------------------------------------------
+
+oof_clipped = np.clip(
+    oof_matrix,
+    1e-6,
+    1 - 1e-6
+)
+
+oof_logits = np.log(
+    oof_clipped
+    /
+    (1.0 - oof_clipped)
+)
+
+
+meta_model = LogisticRegression(
+    C=0.20,
+    penalty="l2",
+    solver="lbfgs",
+    max_iter=2000,
+    random_state=RANDOM_STATE
+)
+
+
+meta_model.fit(
+    oof_logits,
+    y_round
+)
+
+
+print(
+    "Meta classifier trained."
+)
+
+
+# ============================================================
+# 29. BUILD ROUND 8 STACK FEATURES
+# ============================================================
+
+round8_base_predictions = []
+
+for model_name in passing_models:
+
+    print(
+        f"Preparing Round 8 stack prediction: "
+        f"{model_name}"
+    )
+
+    round8_base_predictions.append(
+        round_predictions[model_name]
+    )
+
+
+round8_matrix = np.column_stack(
+    round8_base_predictions
+)
+
+
+round8_clipped = np.clip(
+    round8_matrix,
+    1e-6,
+    1 - 1e-6
+)
+
+
+round8_logits = np.log(
+    round8_clipped
+    /
+    (1.0 - round8_clipped)
+)
+
+
+stack_round8_prediction = (
+    meta_model
+    .predict_proba(
+        round8_logits
+    )[:, 1]
+)
+
+
+stack_round8_auc = roc_auc_score(
+    y_round8,
+    stack_round8_prediction
+)
+
+
+print()
+print("=" * 60)
+print("ROUND 8 STACK RESULT")
+print("=" * 60)
+
+print(
+    f"Stack ROC-AUC: "
+    f"{stack_round8_auc:.6f}"
+)
+
+print(
+    f"Required     : "
+    f"{REQUIRED_ROUND_AUC:.6f}"
+)
+
+
+# ============================================================
+# 30. SECOND HARD GATE — STACK
+# ============================================================
+
+if stack_round8_auc < REQUIRED_ROUND_AUC:
+
+    print()
+    print("=" * 60)
+    print("❌ STACK GATE FAILED")
+    print("=" * 60)
+
+    print()
+    print(
+        "At least one individual model passed,"
+    )
+
+    print(
+        "but the stacked classifier did NOT "
+        "reach the required Round 8 AUC."
+    )
+
+    print()
+    print(
+        "The full dataset WILL NOT be used."
+    )
+
+    raise SystemExit(
+        "ROUND 8 STACK GATE FAILED."
+    )
+
+
+print()
+print("=" * 60)
+print("✅ ROUND 8 STACK GATE PASSED")
+print("=" * 60)
+
+print()
+print(
+    f"Round 8 Stack AUC = "
+    f"{stack_round8_auc:.6f}"
+)
+
+print(
+    f"Required          = "
+    f"{REQUIRED_ROUND_AUC:.6f}"
+)
+
+print()
+
+
+# ============================================================
+# 31. ONLY NOW LOAD COMPLETE DATASET
+# ============================================================
+
+print("=" * 60)
+print("FULL DATASET GATE PASSED")
+print("=" * 60)
+
+print()
+print(
+    "The complete training dataset is now "
+    "allowed to be used."
+)
+
+print()
+
+
+train_file = DATA_DIR / "train.csv"
+test_file = DATA_DIR / "test.csv"
+
+
+if not train_file.exists():
+
+    raise RuntimeError(
+        f"Missing training file:\n{train_file}"
+    )
+
+
+if not test_file.exists():
+
+    raise RuntimeError(
+        f"Missing test file:\n{test_file}"
+    )
+
+
+full_train_raw = pd.read_csv(
+    train_file
+)
+
+full_test_raw = pd.read_csv(
+    test_file
+)
+
+
+full_train_clean = base_feature_engineering(
+    full_train_raw
+)
+
+full_test_clean = base_feature_engineering(
+    full_test_raw
+)
+
+
+full_test_ids = full_test_raw[
+    ID_COLUMN
+].copy()
+
+
+y_full = (
+    full_train_clean[TARGET]
+    .reset_index(drop=True)
+)
+
+
+# ============================================================
+# 32. BUILD FULL RAW MANIFOLD
+# ============================================================
+
+X_full_raw, X_full_test_raw = align_features(
+    full_train_clean,
+    full_test_clean
+)
+
+
+# ============================================================
+# 33. BUILD FULL SEM MANIFOLD
+# ============================================================
+
+print()
+print("=" * 60)
+print("BUILDING FULL SEM MANIFOLD")
+print("=" * 60)
+
+
+X_full_sem, X_full_test_sem, y_full_sem = (
+    prepare_sem_dataset(
+        full_train_clean,
+        full_test_clean
+    )
+)
+
+
+# ============================================================
+# 34. BUILD FULL COMBINED MANIFOLD
+# ============================================================
+
+X_full_combined, X_full_test_combined = (
+    create_combined_manifold(
+        X_full_raw,
+        X_full_test_raw,
+        X_full_sem,
+        X_full_test_sem
+    )
+)
+
+
+# ============================================================
+# 35. BUILD FULL INTERACTION MANIFOLD
+# ============================================================
+
+X_full_interaction, X_full_test_interaction = (
+    create_interaction_manifold(
+        X_full_combined,
+        X_full_test_combined
+    )
+)
+
+
+print()
+print(
+    f"Full raw features        : "
+    f"{X_full_raw.shape[1]}"
+)
+
+print(
+    f"Full SEM features        : "
+    f"{X_full_sem.shape[1]}"
+)
+
+print(
+    f"Full combined features   : "
+    f"{X_full_combined.shape[1]}"
+)
+
+print(
+    f"Full interaction features: "
+    f"{X_full_interaction.shape[1]}"
+)
+
+
+# ============================================================
+# 36. TRAIN PASSING BASE MODELS ON FULL DATA
+# ============================================================
+
+print()
+print("=" * 60)
+print("TRAINING PASSING MODELS ON FULL DATASET")
+print("=" * 60)
+
+
+full_test_predictions = []
+
+
+for model_name in passing_models:
+
+    print()
+    print(
+        f"Training full model: "
+        f"{model_name}"
+    )
+
+    if model_name == "Raw_Logistic":
+
+        pred = fit_raw_logistic(
+            X_full_raw,
+            y_full,
+            X_full_test_raw
+        )
+
+    elif model_name == "Raw_ElasticNet":
+
+        pred = fit_raw_elastic(
+            X_full_raw,
+            y_full,
+            X_full_test_raw
+        )
+
+    elif model_name == "SEM_Logistic":
+
+        pred = fit_sem_logistic(
+            X_full_sem,
+            y_full_sem,
+            X_full_test_sem
+        )
+
+    elif model_name == "Raw_SEM_Logistic":
+
+        pred = fit_combined_logistic(
+            X_full_combined,
+            y_full,
+            X_full_test_combined
+        )
+
+    elif model_name == "Interaction_Logistic":
+
+        pred = fit_interaction_logistic(
+            X_full_interaction,
+            y_full,
+            X_full_test_interaction
+        )
+
+    elif model_name == "Combined_MLP":
+
+        # ----------------------------------------------------
+        # Multi-seed MLP for stability.
+        # ----------------------------------------------------
+
+        seed_predictions = []
+
+        for seed in SEEDS:
+
+            print(
+                f"    MLP seed {seed}"
+            )
+
+            seed_predictions.append(
+                fit_mlp(
+                    X_full_combined,
+                    y_full,
+                    X_full_test_combined,
+                    seed=seed
+                )
+            )
+
+        pred = np.mean(
+            seed_predictions,
+            axis=0
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unknown model: {model_name}"
+        )
+
+    pred = np.asarray(
+        pred,
+        dtype=float
+    )
+
+    if np.isnan(pred).any():
+
+        raise ValueError(
+            f"{model_name} produced NaN predictions."
+        )
+
+    full_test_predictions.append(
+        pred
+    )
+
+
+# ============================================================
+# 37. FULL STACK PREDICTION
+# ============================================================
+
+print()
+print("=" * 60)
+print("APPLYING META CLASSIFIER")
+print("=" * 60)
+
+
+full_base_matrix = np.column_stack(
+    full_test_predictions
+)
+
+
+full_base_clipped = np.clip(
+    full_base_matrix,
+    1e-6,
+    1 - 1e-6
+)
+
+
+full_base_logits = np.log(
+    full_base_clipped
+    /
+    (1.0 - full_base_clipped)
+)
+
+
+final_probabilities = (
+    meta_model
+    .predict_proba(
+        full_base_logits
+    )[:, 1]
+)
+
+
+# ============================================================
+# 38. FINAL SAFETY CHECKS
+# ============================================================
+
+if len(final_probabilities) != len(
+    full_test_raw
+):
+
+    raise ValueError(
+        "Prediction count does not match "
+        "test dataset."
+    )
+
+
+if np.isnan(
+    final_probabilities
+).any():
+
+    raise ValueError(
+        "Final predictions contain NaN."
+    )
+
+
+if np.isinf(
+    final_probabilities
+).any():
+
+    raise ValueError(
+        "Final predictions contain infinity."
+    )
+
+
+if (
+    final_probabilities < 0
+).any():
+
+    raise ValueError(
+        "Predictions below 0."
+    )
+
+
+if (
+    final_probabilities > 1
+).any():
+
+    raise ValueError(
+        "Predictions above 1."
+    )
+
+
+# ============================================================
+# 39. SAVE SUBMISSION
+# ============================================================
+
+output_file = (
+    "submission_exp62_sem_supervised_stack.csv"
+)
+
+
+submission = pd.DataFrame(
+    {
+        ID_COLUMN: full_test_ids,
+        TARGET: final_probabilities
+    }
+)
+
+
+submission.to_csv(
+    output_file,
+    index=False
+)
+
+
+# ============================================================
+# 40. FINAL REPORT
+# ============================================================
+
+print()
+print("=" * 60)
 print("EXPERIMENT 62 COMPLETE")
-print("============================================")
-print(f"Saved: {output_file}")
-print(f"Rows: {len(submission)}")
+print("=" * 60)
 
-print("\nPrediction summary:")
-print(submission["employed_status"].describe())
+print()
+print(
+    f"Round 8 Stack AUC : "
+    f"{stack_round8_auc:.6f}"
+)
 
-print("\nFirst 10 predictions:")
-print(submission.head(10))
+print(
+    f"Required AUC      : "
+    f"{REQUIRED_ROUND_AUC:.6f}"
+)
 
-print("\n============================================")
+print()
+
+print(
+    "Passing models:"
+)
+
+for model_name in passing_models:
+
+    print(
+        f"  {model_name:<30} "
+        f"{round_scores[model_name]:.6f}"
+    )
+
+
+print()
+print(
+    "Meta-model coefficients:"
+)
+
+for model_name, coefficient in zip(
+    passing_models,
+    meta_model.coef_[0]
+):
+
+    print(
+        f"  {model_name:<30} "
+        f"{coefficient:.6f}"
+    )
+
+
+print()
+print(
+    "Final prediction summary:"
+)
+
+print(
+    pd.Series(
+        final_probabilities
+    ).describe()
+)
+
+
+print()
+print(
+    "First 10 predictions:"
+)
+
+print(
+    submission.head(10)
+)
+
+
+print()
+print("=" * 60)
 print("BENCHMARKS")
-print("============================================")
-print("Exp 51 Base Titan Hybrid        : 0.65693")
-print("Exp 59 Pure SEM Latent Titan    : 0.65832 (Personal Best)")
-print(f"Exp 62 Multi-View OOF Stacking  : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print("=" * 60)
 
-print("\n============================================")
+print(
+    "Exp 59 Pure SEM Latent Titan    : 0.65832"
+)
+
+print(
+    "Exp 60 Deep SEM Longitudinal    : 0.65735"
+)
+
+print(
+    "Exp 61 Dual-Manifold Grand      : 0.65832 baseline"
+)
+
+print(
+    f"Exp 62 Round 8 Stack            : "
+    f"{stack_round8_auc:.6f}"
+)
+
+print()
+print(
+    f"Saved submission: {output_file}"
+)
+
+print()
+print("=" * 60)
 print("READY FOR KAGGLE SUBMISSION")
-print("============================================")
+print("=" * 60)
+
