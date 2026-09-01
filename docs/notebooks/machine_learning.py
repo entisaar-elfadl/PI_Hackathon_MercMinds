@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 57 — GRAND CONSENSUS & TEMPERATURE-SCALED TITAN
-# (10-SEED EXP 51 ENGINE + AUTOMATED TOP-SUBMISSION CONSENSUS)
+# EXPERIMENT 58 — STACKING PERCEPTRONS & CLASSIFICATION TREES
+# (META-LEARNER OVER MULTI-LAYER PERCEPTRON, RANDOM FOREST, EXTRA TREES & HIST GB)
 # ============================================================
 
 import pandas as pd
@@ -13,11 +13,18 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    ExtraTreesClassifier,
+    HistGradientBoostingClassifier,
+    StackingClassifier
+)
+from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 57")
-print("GRAND CONSENSUS & TEMPERATURE-SCALED TITAN")
+print("EXPERIMENT 58")
+print("STACKING PERCEPTRONS & CLASSIFICATION TREES")
 print("============================================")
 
 
@@ -33,13 +40,13 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. PROVEN 0.65693 FEATURE PIPELINE
+# 2. PROVEN FEATURE EXTRACTION
 # ============================================================
 
 target = "employed_status"
 
 def clean_and_prepare_features(df):
-    """Restores the exact, high-performing raw feature space from Exp 51."""
+    """Restores the proven high-scoring raw feature space."""
     data = df.copy()
 
     if target in data.columns:
@@ -75,65 +82,129 @@ def clean_and_prepare_features(df):
     return data
 
 
-def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    """Builds standard or quantile-normalized preprocessor."""
-    transformers = []
+def build_preprocessor(numerical_cols, categorical_cols):
+    """Builds standard scaler + one-hot preprocessor."""
+    numeric_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ])
 
-    if len(numerical_cols) > 0:
-        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
-        numeric_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", scaler)
-        ])
-        transformers.append(("num", numeric_transformer, numerical_cols))
+    categorical_transformer = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+    ])
 
-    if len(categorical_cols) > 0:
-        categorical_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-        ])
-        transformers.append(("cat", categorical_transformer, categorical_cols))
-
-    return ColumnTransformer(transformers=transformers)
+    return ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numerical_cols),
+            ("cat", categorical_transformer, categorical_cols)
+        ]
+    )
 
 
 # ============================================================
-# 3. WINNING EXP 51 MODEL FACTORIES
+# 3. BASE ESTIMATORS (PERCEPTRONS + CLASSIFICATION TREES)
 # ============================================================
 
-def get_champion_models(seed=42):
-    """Returns the top linear champions + neural MLP."""
-    return {
-        "LogReg_L2_C008": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False,
-            "linear"
-        ),
-        "LogReg_L2_C010": (
-            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            False,
-            "linear"
-        ),
-        "LogReg_ElasticNet_C010": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
-            False,
-            "linear"
-        ),
-        "Quantile_LogReg_L2_C008": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
-            True,
-            "linear"
-        ),
-        "MLP_Medium_64_32": (
-            MLPClassifier(
-                hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                n_iter_no_change=20, validation_fraction=0.15, random_state=seed
-            ),
-            False,
-            "neural"
-        )
-    }
+def build_stacked_pipeline(numerical_cols, categorical_cols, seed=42):
+    """
+    Constructs a meta-learning StackingClassifier:
+    1. Multi-Layer Perceptron (Neural network representation)
+    2. Random Forest (Deep orthogonal tree splits)
+    3. Extra Trees (Randomized variance-reducing tree splits)
+    4. HistGradientBoosting (Gradient boosted sequential trees)
+    5. Logistic Regression (Linear regularized anchor)
+    Meta-Learner: Logistic Regression (Learns how to weight them on OOF predictions)
+    """
+    preprocessor = build_preprocessor(numerical_cols, categorical_cols)
+
+    # 1. Perceptron (Multi-Layer Neural Net)
+    mlp = MLPClassifier(
+        hidden_layer_sizes=(64, 32),
+        activation="relu",
+        solver="adam",
+        alpha=0.01,
+        batch_size=128,
+        learning_rate_init=0.001,
+        max_iter=300,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed
+    )
+
+    # 2. Random Forest Classification Trees
+    rf = RandomForestClassifier(
+        n_estimators=150,
+        max_depth=10,
+        min_samples_leaf=15,
+        max_features="sqrt",
+        random_state=seed,
+        n_jobs=-1
+    )
+
+    # 3. Extra Trees (Extremely Randomized Classification Trees)
+    et = ExtraTreesClassifier(
+        n_estimators=150,
+        max_depth=12,
+        min_samples_leaf=10,
+        max_features="sqrt",
+        random_state=seed,
+        n_jobs=-1
+    )
+
+    # 4. HistGradientBoosting (Boosted Decision Trees)
+    hgb = HistGradientBoostingClassifier(
+        loss="log_loss",
+        learning_rate=0.035,
+        max_iter=250,
+        max_leaf_nodes=31,
+        min_samples_leaf=20,
+        l2_regularization=2.0,
+        early_stopping=True,
+        n_iter_no_change=20,
+        validation_fraction=0.15,
+        random_state=seed
+    )
+
+    # 5. Regularized Linear Anchor
+    lr = LogisticRegression(
+        C=0.10,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=seed
+    )
+
+    base_estimators = [
+        ("perceptron_mlp", mlp),
+        ("random_forest", rf),
+        ("extra_trees", et),
+        ("gradient_trees", hgb),
+        ("logistic_anchor", lr)
+    ]
+
+    # The Meta-Learner that trains to figure out which base model to trust
+    meta_learner = LogisticRegression(
+        C=0.10,
+        penalty="l2",
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=seed
+    )
+
+    stacker = StackingClassifier(
+        estimators=base_estimators,
+        final_estimator=meta_learner,
+        cv=5,                     # 5-fold cross-validation internally for meta-features
+        stack_method="predict_proba",
+        n_jobs=-1
+    )
+
+    return Pipeline(steps=[
+        ("preprocessor", preprocessor),
+        ("stacker", stacker)
+    ])
 
 
 # ============================================================
@@ -167,105 +238,46 @@ if high_cardinality:
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
 
-print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
+print(f"Full dataset: {len(X_full)} observations")
+print(f"Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
 
 # ============================================================
-# 5. TRAIN 10-SEED TITAN ENGINE (50 TOTAL SUB-MODELS)
-# ============================================================
-
-print("\n============================================")
-print("TRAINING 10-SEED TITAN ENGINE (50 SUB-MODELS)")
-print("============================================")
-
-SEEDS = [42, 101, 777, 2024, 999, 1337, 555, 888, 314, 271]
-
-linear_logits_list = []
-neural_logits_list = []
-
-model_dict_sample = get_champion_models(seed=42)
-
-for model_name, (_, use_quantile, model_family) in model_dict_sample.items():
-    print(f" -> Training {model_name} ({model_family.upper()}) across {len(SEEDS)} seeds...")
-
-    for s_idx, seed in enumerate(SEEDS):
-        models_pool = get_champion_models(seed=seed)
-        model_estimator, use_q, _ = models_pool[model_name]
-
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_estimator)
-        ])
-        pipe.fit(X_full, y_full)
-        probs = pipe.predict_proba(X_test_full)[:, 1]
-
-        probs_clipped = np.clip(probs, 1e-6, 1.0 - 1e-6)
-        logits = np.log(probs_clipped / (1.0 - probs_clipped))
-
-        if model_family == "linear":
-            linear_logits_list.append(logits)
-        else:
-            neural_logits_list.append(logits)
-
-# 80% Linear + 20% Neural in Logit Space
-mean_linear_logits = np.mean(linear_logits_list, axis=0)
-mean_neural_logits = np.mean(neural_logits_list, axis=0)
-
-titan_logits = 0.80 * mean_linear_logits + 0.20 * mean_neural_logits
-
-# Apply Temperature Scaling (T = 1.05) to refine calibration
-TEMPERATURE = 1.05
-scaled_titan_logits = titan_logits / TEMPERATURE
-titan_probabilities = 1.0 / (1.0 + np.exp(-scaled_titan_logits))
-
-
-# ============================================================
-# 6. AUTOMATED TOP-SUBMISSION CONSENSUS BLEND
+# 5. TRAIN MULTI-SEED STACKED META-LEARNER
 # ============================================================
 
 print("\n============================================")
-print("DISCOVERING PAST TOP SUBMISSIONS FOR CONSENSUS")
+print("TRAINING STACKED META-LEARNER (5-FOLD CV INTERNAL)")
 print("============================================")
 
-# Priority list of past top submissions
-candidate_files = {
-    "submission_exp51_restored_titan_ensemble.csv": 0.40,  # 0.65693 Personal Best
-    "submission_exp53_historical_track_titan_ensemble.csv": 0.30,  # 0.65671
-    "submission_exp47_pure_logit_ensemble.csv": 0.15,      # 0.65635
-    "submission_exp44_optimized_linear_ensemble.csv": 0.15  # 0.65630
-}
+SEEDS = [42, 101, 777, 2024, 999]
+seed_predictions = []
 
-discovered_submissions = []
-discovered_weights = []
+for s_idx, seed in enumerate(SEEDS):
+    print(f"\n[Seed {seed} ({s_idx + 1}/{len(SEEDS)})] Training Perceptrons + Classification Trees Stacker...")
+    pipeline = build_stacked_pipeline(numerical_features, categorical_features, seed=seed)
+    pipeline.fit(X_full, y_full)
 
-for f_name, w in candidate_files.items():
-    file_path = CURRENT_DIR / f_name
-    if file_path.exists():
-        sub_df = pd.read_csv(file_path)
-        if target in sub_df.columns and len(sub_df) == len(test_raw):
-            p = np.clip(sub_df[target].to_numpy(), 1e-6, 1.0 - 1e-6)
-            discovered_submissions.append(np.log(p / (1.0 - p)))
-            discovered_weights.append(w)
-            print(f" -> Found past top submission: {f_name} (Weight: {w*100:.0f}%)")
+    # Inspect the learned meta-weights from the final estimator
+    meta_model = pipeline.named_steps["stacker"].final_estimator_
+    if hasattr(meta_model, "coef_"):
+        print(f" -> Learned Meta-Model Coefficients:\n    {meta_model.coef_[0]}")
 
-if len(discovered_submissions) > 0:
-    # Normalize weights
-    total_w = sum(discovered_weights)
-    norm_w = [w / total_w for w in discovered_weights]
-    past_consensus_logits = sum(w * sub for w, sub in zip(norm_w, discovered_submissions))
+    probs = pipeline.predict_proba(X_test_full)[:, 1]
+    seed_predictions.append(probs)
 
-    # 60% Fresh 10-Seed Titan + 40% Past Champions Consensus
-    final_consensus_logits = 0.60 * scaled_titan_logits + 0.40 * past_consensus_logits
-    final_probabilities = 1.0 / (1.0 + np.exp(-final_consensus_logits))
-    print("\n✅ Successfully integrated fresh 10-Seed Titan with past top-performing champions.")
-else:
-    final_probabilities = titan_probabilities
-    print("\nℹ️ Generating predictions purely from the fresh 10-Seed Titan engine.")
+# Average predictions across seeds in Logit (Log-Odds) Space
+logits_list = []
+for p in seed_predictions:
+    p_clipped = np.clip(p, 1e-6, 1.0 - 1e-6)
+    logits_list.append(np.log(p_clipped / (1.0 - p_clipped)))
+
+mean_logits = np.mean(logits_list, axis=0)
+final_probabilities = 1.0 / (1.0 + np.exp(-mean_logits))
 
 
 # ============================================================
-# 7. VALIDATE & SAVE SUBMISSION FILE
+# 6. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -275,7 +287,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp57_grand_consensus_ensemble.csv"
+output_file = "submission_exp58_stacked_perceptrons_trees.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -286,11 +298,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 8. SUMMARY & BENCHMARKS
+# 7. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 57 COMPLETE")
+print("EXPERIMENT 58 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -304,11 +316,10 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 44 Top-3 Linear Blend      : 0.65630")
-print("Exp 47 Pure-Logit Ensemble     : 0.65635")
-print("Exp 53 Longitudinal Track      : 0.65671")
-print("Exp 51 Base Titan Hybrid       : 0.65693 (Personal Best)")
-print("Exp 57 Grand Consensus Blend   : READY")
+print("Exp 44 Top-3 Linear Blend          : 0.65630")
+print("Exp 51 Base Titan Hybrid           : 0.65693 (Personal Best)")
+print("Exp 57 Grand Consensus Blend       : 0.65689")
+print("Exp 58 Stacked Perceptrons + Trees : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
