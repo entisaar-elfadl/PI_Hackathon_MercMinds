@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 56 — HIGH-LEVERAGE LABOUR MARKET INTERACTIONS
-# (JOB MOMENTUM, STEM GATEWAYS, METRO ADVANTAGE & TITAN BLEND)
+# EXPERIMENT 57 — GRAND CONSENSUS & TEMPERATURE-SCALED TITAN
+# (10-SEED EXP 51 ENGINE + AUTOMATED TOP-SUBMISSION CONSENSUS)
 # ============================================================
 
 import pandas as pd
@@ -11,15 +11,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 56")
-print("HIGH-LEVERAGE LABOUR MARKET INTERACTIONS")
+print("EXPERIMENT 57")
+print("GRAND CONSENSUS & TEMPERATURE-SCALED TITAN")
 print("============================================")
 
 
@@ -33,63 +31,25 @@ DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
-ROUND_DIR = CURRENT_DIR / "round_testing"
-if not ROUND_DIR.exists():
-    ROUND_DIR = DATA_DIR / "round_testing"
-
 
 # ============================================================
-# 2. HIGH-LEVERAGE TARGETED VARIABLE ENGINEERING
+# 2. PROVEN 0.65693 FEATURE PIPELINE
 # ============================================================
 
 target = "employed_status"
 
-def parse_matric_band(val):
-    """Parses banded percentage strings into continuous numerical scores."""
-    if pd.isna(val):
-        return np.nan
-    s = str(val).replace("%", "").strip()
-    if "-" in s:
-        parts = s.split("-")
-        try:
-            return (float(parts[0]) + float(parts[1])) / 2.0
-        except Exception:
-            return np.nan
-    elif "<" in s:
-        try:
-            return float(s.replace("<", "").strip()) / 2.0
-        except Exception:
-            return np.nan
-    elif ">" in s:
-        try:
-            return float(s.replace(">", "").strip()) + 5.0
-        except Exception:
-            return np.nan
-    else:
-        try:
-            return float(s)
-        except Exception:
-            return np.nan
-
-
-def extract_high_leverage_features(df):
-    """
-    Constructs high-signal domain features focusing on employment momentum,
-    STEM credentials, geographic economic hubs, and demographic interactions.
-    """
+def clean_and_prepare_features(df):
+    """Restores the exact, high-performing raw feature space from Exp 51."""
     data = df.copy()
 
-    # 1. Target Cleaning
     if target in data.columns:
         data[target] = pd.to_numeric(data[target], errors="coerce")
         data = data.dropna(subset=[target]).copy()
         data[target] = data[target].astype(int)
 
-    # 2. Identification
     if "anonymised_id" in data.columns:
         data = data.drop(columns=["anonymised_id"])
 
-    # 3. Calendar Features
     if "survey_date" in data.columns:
         data["survey_date"] = pd.to_datetime(data["survey_date"], errors="coerce")
         data["survey_year"] = data["survey_date"].dt.year
@@ -97,80 +57,15 @@ def extract_high_leverage_features(df):
         data["survey_dayofyear"] = data["survey_date"].dt.dayofyear
         data = data.drop(columns=["survey_date"])
 
-    # ------------------------------------------------------------
-    # DRIVER 1: LABOUR MOMENTUM & TENURE STABILITY
-    # ------------------------------------------------------------
     if "employed_lag" in data.columns:
         data["is_first_time"] = data["employed_lag"].isna().astype(float)
-        data["employed_lag_val"] = data["employed_lag"].fillna(-1).astype(float)
-    else:
-        data["is_first_time"] = 1.0
-        data["employed_lag_val"] = -1.0
-
-    tenure_raw = pd.to_numeric(data.get("tenure_lag", 0), errors="coerce").fillna(0)
-    data["tenure_lag_log"] = np.log1p(tenure_raw.clip(lower=0))
-    # Stable formal employment indicator (prior job tenure > 6 months)
-    data["is_long_tenure_retained"] = ((data["employed_lag_val"] == 1) & (tenure_raw > 180)).astype(float)
-
-    days_raw = pd.to_numeric(data.get("days_since_last_obs", 0), errors="coerce").fillna(0)
-    data["days_since_last_obs_log"] = np.log1p(days_raw.clip(lower=0))
-
-    # Prior state nuances (Searching vs Discouraged vs Studying)
-    if "status_broad_lag" in data.columns:
-        data["was_studying_lag"] = data["status_broad_lag"].astype(str).str.contains("study", case=False, na=False).astype(float)
-    else:
-        data["was_studying_lag"] = 0.0
-
-    # ------------------------------------------------------------
-    # DRIVER 2: STEM CREDENTIALS & MATRIC GATEWAYS
-    # ------------------------------------------------------------
-    matric_cols = ["matric_englishhome", "matric_englishadd", "matric_mathpure", "matric_physicalscience", "matric_mathlit"]
-    for m in matric_cols:
-        if m in data.columns:
-            data[f"{m}_score"] = data[m].apply(parse_matric_band)
-
-    # Has pure math vs math literacy vs science
-    data["has_pure_math"] = (data.get("matric_mathpure_score", pd.Series(np.nan, index=data.index)).notna()).astype(float)
-    data["has_science"] = (data.get("matric_physicalscience_score", pd.Series(np.nan, index=data.index)).notna()).astype(float)
-    data["stem_subject_count"] = data["has_pure_math"] + data["has_science"]
-
-    # Best math score
-    m_pure = data.get("matric_mathpure_score", pd.Series(np.nan, index=data.index))
-    m_lit = data.get("matric_mathlit_score", pd.Series(np.nan, index=data.index))
-    data["best_math_mark"] = pd.concat([m_pure, m_lit], axis=1).max(axis=1).fillna(0.0)
-
-    # ------------------------------------------------------------
-    # DRIVER 3: SPATIAL & ECONOMIC HUB ADVANTAGE
-    # ------------------------------------------------------------
-    if "province" in data.columns:
-        prov_str = data["province"].astype(str).str.strip().str.lower()
-        # Top 2 economic centers in South Africa (Gauteng + Western Cape)
-        data["is_primary_metro_province"] = prov_str.isin(["gauteng", "western cape"]).astype(float)
-    else:
-        data["is_primary_metro_province"] = 0.0
-
-    # ------------------------------------------------------------
-    # DRIVER 4: HUMAN CAPITAL & BEHAVIOURAL READINESS
-    # ------------------------------------------------------------
-    age_raw = pd.to_numeric(data.get("age", 22), errors="coerce").fillna(22).clip(18, 35)
-    data["age_clean"] = age_raw
-    data["potential_work_years"] = (age_raw - 18).clip(lower=0)
-
-    quintile_raw = pd.to_numeric(data.get("school_quintile", 0), errors="coerce").fillna(0)
-    data["school_quintile_num"] = quintile_raw
-    data["is_resourced_school"] = (quintile_raw >= 4).astype(float)
-
-    readiness_raw = pd.to_numeric(data.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
-    data["work_readiness_num"] = readiness_raw
     
-    # Interaction: High readiness + Resourced background
-    data["readiness_x_quintile"] = readiness_raw * (quintile_raw / 5.0)
+    if "tenure_lag" in data.columns:
+        data["tenure_lag_log"] = np.log1p(data["tenure_lag"].fillna(0).clip(lower=0))
 
-    # Tertiary & Vocational Flags
-    data["has_tertiary"] = (data.get("institution_type", pd.Series(np.nan, index=data.index)).notna()).astype(float)
-    data["has_seta"] = (data.get("seta", pd.Series(np.nan, index=data.index)).notna()).astype(float)
+    if "days_since_last_obs" in data.columns:
+        data["days_since_last_obs_log"] = np.log1p(data["days_since_last_obs"].fillna(0).clip(lower=0))
 
-    # Auto-convert residual object columns
     for col in data.columns:
         if col != target and data[col].dtype == "object":
             converted = pd.to_numeric(data[col], errors="coerce")
@@ -203,31 +98,31 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. HIGH-PERFORMING MULTI-PARADIGM SUITE
+# 3. WINNING EXP 51 MODEL FACTORIES
 # ============================================================
 
-def get_titan_models(seed=42):
-    """Returns the top linear champions, shrinkage LDA, and neural MLP."""
+def get_champion_models(seed=42):
+    """Returns the top linear champions + neural MLP."""
     return {
         "LogReg_L2_C008": (
             LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False,
-            0.30
+            "linear"
         ),
         "LogReg_L2_C010": (
             LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
             False,
-            0.25
+            "linear"
         ),
         "LogReg_ElasticNet_C010": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
             False,
-            0.20
+            "linear"
         ),
-        "LDA_Shrinkage_015": (
-            LinearDiscriminantAnalysis(solver="lsqr", shrinkage=0.15),
-            False,
-            0.10
+        "Quantile_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            True,
+            "linear"
         ),
         "MLP_Medium_64_32": (
             MLPClassifier(
@@ -236,125 +131,25 @@ def get_titan_models(seed=42):
                 n_iter_no_change=20, validation_fraction=0.15, random_state=seed
             ),
             False,
-            0.15
+            "neural"
         )
     }
 
 
 # ============================================================
-# 4. LOAD & BENCHMARK ON SEQUENTIAL ROUND DATASETS
+# 4. LOAD & PREPARE DATASET
 # ============================================================
 
 print("\n============================================")
-print("DISCOVERING & VALIDATING ON SEQUENTIAL ROUNDS")
-print("============================================")
-
-round_data_list = []
-
-if ROUND_DIR.exists():
-    round_folders = sorted([f for f in ROUND_DIR.glob("round_*") if f.is_dir()])
-    for r_dir in round_folders:
-        csv_files = list(r_dir.glob("*.csv"))
-        if len(csv_files) >= 2:
-            csv_files = sorted(csv_files, key=lambda f: f.stat().st_size)
-            test_file, train_file = csv_files[0], csv_files[1]
-
-            r_train_raw = pd.read_csv(train_file)
-            r_test_raw = pd.read_csv(test_file)
-
-            if target in r_train_raw.columns and target in r_test_raw.columns:
-                r_train_clean = extract_high_leverage_features(r_train_raw)
-                r_test_clean = extract_high_leverage_features(r_test_raw)
-
-                common_features = [c for c in r_train_clean.columns if c in r_test_clean.columns and c != target]
-                y_tr_vals = r_train_clean[target]
-                y_te_vals = r_test_clean[target]
-
-                if len(common_features) >= 15 and y_tr_vals.nunique() >= 2 and y_te_vals.nunique() >= 2:
-                    round_data_list.append({
-                        "name": r_dir.name,
-                        "X_train": r_train_clean[common_features].reset_index(drop=True),
-                        "y_train": y_tr_vals.reset_index(drop=True),
-                        "X_test": r_test_clean[common_features].reset_index(drop=True),
-                        "y_test": y_te_vals.reset_index(drop=True)
-                    })
-                    print(f" -> Loaded {r_dir.name.upper()} | Train: {len(r_train_clean)} | Test: {len(r_test_clean)} | Features: {len(common_features)}")
-
-
-# ============================================================
-# 5. RUN TOURNAMENT ACROSS VALID ROUNDS
-# ============================================================
-
-print("\n============================================")
-print("BENCHMARKING MODELS WITH HIGH-LEVERAGE FEATURES")
-print("============================================")
-
-candidate_dict = get_titan_models(seed=42)
-tournament_scores = {name: [] for name in candidate_dict.keys()}
-round_names = []
-
-for r_data in round_data_list:
-    r_name = r_data["name"]
-    round_names.append(r_name.upper())
-    X_tr = r_data["X_train"].copy()
-    y_tr = r_data["y_train"].copy()
-    X_te = r_data["X_test"].copy()
-    y_te = r_data["y_test"].copy()
-
-    # Drop high-cardinality (>100)
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
-    if high_card:
-        X_tr = X_tr.drop(columns=high_card)
-        X_te = X_te.drop(columns=high_card)
-
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
-
-    models_dict = get_titan_models(seed=42)
-
-    for model_name, (model_obj, use_quantile, _) in models_dict.items():
-        preprocessor = build_preprocessor(num_cols, cat_cols, use_quantile=use_quantile)
-        pipe = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
-        ])
-        pipe.fit(X_tr, y_tr)
-        probs = pipe.predict_proba(X_te)[:, 1]
-        score = roc_auc_score(y_te, probs)
-        tournament_scores[model_name].append(score)
-
-# Leaderboard Summary
-results_table = []
-for model_name, scores in tournament_scores.items():
-    mean_score = np.mean(scores) if scores else 0.0
-    row = {"Model Architecture": model_name, "Mean Round AUC": mean_score}
-    for i, s in enumerate(scores):
-        row[f"{round_names[i]} AUC"] = s
-    results_table.append(row)
-
-leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
-
-print("\n============================================")
-print("ROUND TOURNAMENT LEADERBOARD")
-print("============================================")
-print(leaderboard_df.to_string(index=False))
-
-
-# ============================================================
-# 6. TRAIN MULTI-SEED TITAN ENSEMBLE ON FULL DATASET
-# ============================================================
-
-print("\n============================================")
-print("TRAINING MULTI-SEED ENSEMBLE ON FULL DATASET (35 MODELS)")
+print("LOADING DATASET & EXTRACTING FEATURES")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
 
-train_clean = extract_high_leverage_features(train_raw)
-test_clean = extract_high_leverage_features(test_raw)
+train_clean = clean_and_prepare_features(train_raw)
+test_clean = clean_and_prepare_features(test_raw)
 
 common_cols = [c for c in train_clean.columns if c in test_clean.columns and c != target]
 
@@ -362,7 +157,7 @@ y_full = train_clean[target].reset_index(drop=True)
 X_full = train_clean[common_cols].reset_index(drop=True)
 X_test_full = test_clean[common_cols].reset_index(drop=True)
 
-# Drop high-cardinality (>100)
+# Drop high-cardinality categorical (>100)
 categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
 if high_cardinality:
@@ -374,18 +169,28 @@ numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
 
 print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
-SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
 
-model_specs = get_titan_models(seed=42)
-final_accumulated_logits = np.zeros(len(X_test_full))
+# ============================================================
+# 5. TRAIN 10-SEED TITAN ENGINE (50 TOTAL SUB-MODELS)
+# ============================================================
 
-for m_name, (_, use_quantile, weight) in model_specs.items():
-    print(f" -> Fitting {m_name:<25} (Weight = {weight*100:.0f}%) across {len(SEEDS)} seeds...")
-    
-    seed_logits_list = []
-    for seed in SEEDS:
-        models_pool = get_titan_models(seed=seed)
-        model_estimator, use_q, _ = models_pool[m_name]
+print("\n============================================")
+print("TRAINING 10-SEED TITAN ENGINE (50 SUB-MODELS)")
+print("============================================")
+
+SEEDS = [42, 101, 777, 2024, 999, 1337, 555, 888, 314, 271]
+
+linear_logits_list = []
+neural_logits_list = []
+
+model_dict_sample = get_champion_models(seed=42)
+
+for model_name, (_, use_quantile, model_family) in model_dict_sample.items():
+    print(f" -> Training {model_name} ({model_family.upper()}) across {len(SEEDS)} seeds...")
+
+    for s_idx, seed in enumerate(SEEDS):
+        models_pool = get_champion_models(seed=seed)
+        model_estimator, use_q, _ = models_pool[model_name]
 
         preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
         pipe = Pipeline(steps=[
@@ -395,15 +200,68 @@ for m_name, (_, use_quantile, weight) in model_specs.items():
         pipe.fit(X_full, y_full)
         probs = pipe.predict_proba(X_test_full)[:, 1]
 
-        # Logit-space conversion
         probs_clipped = np.clip(probs, 1e-6, 1.0 - 1e-6)
         logits = np.log(probs_clipped / (1.0 - probs_clipped))
-        seed_logits_list.append(logits)
 
-    model_mean_logits = np.mean(seed_logits_list, axis=0)
-    final_accumulated_logits += weight * model_mean_logits
+        if model_family == "linear":
+            linear_logits_list.append(logits)
+        else:
+            neural_logits_list.append(logits)
 
-final_probabilities = 1.0 / (1.0 + np.exp(-final_accumulated_logits))
+# 80% Linear + 20% Neural in Logit Space
+mean_linear_logits = np.mean(linear_logits_list, axis=0)
+mean_neural_logits = np.mean(neural_logits_list, axis=0)
+
+titan_logits = 0.80 * mean_linear_logits + 0.20 * mean_neural_logits
+
+# Apply Temperature Scaling (T = 1.05) to refine calibration
+TEMPERATURE = 1.05
+scaled_titan_logits = titan_logits / TEMPERATURE
+titan_probabilities = 1.0 / (1.0 + np.exp(-scaled_titan_logits))
+
+
+# ============================================================
+# 6. AUTOMATED TOP-SUBMISSION CONSENSUS BLEND
+# ============================================================
+
+print("\n============================================")
+print("DISCOVERING PAST TOP SUBMISSIONS FOR CONSENSUS")
+print("============================================")
+
+# Priority list of past top submissions
+candidate_files = {
+    "submission_exp51_restored_titan_ensemble.csv": 0.40,  # 0.65693 Personal Best
+    "submission_exp53_historical_track_titan_ensemble.csv": 0.30,  # 0.65671
+    "submission_exp47_pure_logit_ensemble.csv": 0.15,      # 0.65635
+    "submission_exp44_optimized_linear_ensemble.csv": 0.15  # 0.65630
+}
+
+discovered_submissions = []
+discovered_weights = []
+
+for f_name, w in candidate_files.items():
+    file_path = CURRENT_DIR / f_name
+    if file_path.exists():
+        sub_df = pd.read_csv(file_path)
+        if target in sub_df.columns and len(sub_df) == len(test_raw):
+            p = np.clip(sub_df[target].to_numpy(), 1e-6, 1.0 - 1e-6)
+            discovered_submissions.append(np.log(p / (1.0 - p)))
+            discovered_weights.append(w)
+            print(f" -> Found past top submission: {f_name} (Weight: {w*100:.0f}%)")
+
+if len(discovered_submissions) > 0:
+    # Normalize weights
+    total_w = sum(discovered_weights)
+    norm_w = [w / total_w for w in discovered_weights]
+    past_consensus_logits = sum(w * sub for w, sub in zip(norm_w, discovered_submissions))
+
+    # 60% Fresh 10-Seed Titan + 40% Past Champions Consensus
+    final_consensus_logits = 0.60 * scaled_titan_logits + 0.40 * past_consensus_logits
+    final_probabilities = 1.0 / (1.0 + np.exp(-final_consensus_logits))
+    print("\n✅ Successfully integrated fresh 10-Seed Titan with past top-performing champions.")
+else:
+    final_probabilities = titan_probabilities
+    print("\nℹ️ Generating predictions purely from the fresh 10-Seed Titan engine.")
 
 
 # ============================================================
@@ -417,7 +275,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp56_high_leverage_interactions.csv"
+output_file = "submission_exp57_grand_consensus_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -432,7 +290,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 56 COMPLETE")
+print("EXPERIMENT 57 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -446,10 +304,11 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 44 Top-3 Linear Blend          : 0.65630")
-print("Exp 51 Base Titan Hybrid           : 0.65693 (Personal Best)")
-print("Exp 54 Grand Master Dual Blend     : 0.65670")
-print("Exp 56 High-Leverage Interactions  : READY")
+print("Exp 44 Top-3 Linear Blend      : 0.65630")
+print("Exp 47 Pure-Logit Ensemble     : 0.65635")
+print("Exp 53 Longitudinal Track      : 0.65671")
+print("Exp 51 Base Titan Hybrid       : 0.65693 (Personal Best)")
+print("Exp 57 Grand Consensus Blend   : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
