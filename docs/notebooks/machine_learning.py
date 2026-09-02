@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 63 — SUPPORT VECTOR MACHINES (SVM) & LATENT ENSEMBLE
-# (FIXED: SAFE ROUND TARGET CLEANING, CALIBRATED SVMs & SEM BLEND)
+# EXPERIMENT 64 — VARIMAX-ROTATED SEM SUPER-CHAMPION
+# (ORTHOGONAL VARIMAX LATENT FACTORS + 10-SEED 70-MODEL TITAN)
 # ============================================================
 
 import pandas as pd
@@ -13,16 +13,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.svm import LinearSVC, SVC
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 
 print("============================================")
-print("EXPERIMENT 63")
-print("SUPPORT VECTOR MACHINES (SVM) & LATENT ENSEMBLE")
+print("EXPERIMENT 64")
+print("VARIMAX-ROTATED SEM SUPER-CHAMPION ENSEMBLE")
 print("============================================")
 
 
@@ -42,13 +40,13 @@ if not ROUND_DIR.exists():
 
 
 # ============================================================
-# 2. FEATURE PARSERS & SEM LATENT FACTORS (SAFE TARGET CLEANING)
+# 2. VARIMAX-ROTATED SEM LATENT MEASUREMENT MODEL
 # ============================================================
 
 target = "employed_status"
 
 def parse_matric_band(val):
-    """Converts matric banded percentage strings into continuous marks."""
+    """Converts matric percentage strings into continuous numeric marks."""
     if pd.isna(val):
         return np.nan
     s = str(val).replace("%", "").strip()
@@ -75,18 +73,19 @@ def parse_matric_band(val):
             return np.nan
 
 
-def extract_features_with_sem(train_df, test_df):
-    """Extracts proven date/lag features and computes SEM latent factors safely."""
+def extract_varimax_sem_features(train_df, test_df):
+    """
+    Extracts orthogonal Varimax-rotated latent factors and PLS paths.
+    """
     tr = train_df.copy()
     te = test_df.copy()
 
-    # Clean target in training set
+    # Clean target
     if target in tr.columns:
         tr[target] = pd.to_numeric(tr[target], errors="coerce")
         tr = tr.dropna(subset=[target]).copy()
         tr[target] = tr[target].astype(int)
 
-    # Clean target in test set if present (for round validation holdouts)
     if target in te.columns:
         te[target] = pd.to_numeric(te[target], errors="coerce")
         te = te.dropna(subset=[target]).copy()
@@ -116,7 +115,6 @@ def extract_features_with_sem(train_df, test_df):
         df["work_readiness_num"] = pd.to_numeric(df.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
         df["age_clean"] = pd.to_numeric(df.get("age", 22), errors="coerce").fillna(22.0).clip(18, 35)
 
-        # Explicit bool-to-float & safe numeric conversion
         for col in df.columns:
             if df[col].dtype == "bool":
                 df[col] = df[col].astype(float)
@@ -125,7 +123,9 @@ def extract_features_with_sem(train_df, test_df):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    # Latent SEM Blocks
+    # ------------------------------------------------------------
+    # VARIMAX-ROTATED LATENT MEASUREMENT BLOCKS
+    # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
@@ -133,33 +133,44 @@ def extract_features_with_sem(train_df, test_df):
     imp = SimpleImputer(strategy="median")
     scl = StandardScaler()
 
+    # Block 1: Academic Capital (Varimax Rotated)
     if len(acad_cols) > 0:
-        fa_acad = FactorAnalysis(n_components=2, random_state=42)
+        fa_acad = FactorAnalysis(n_components=2, rotation="varimax", random_state=42)
         X_ac_tr = scl.fit_transform(imp.fit_transform(tr[acad_cols]))
         X_ac_te = scl.transform(imp.transform(te[acad_cols]))
-        tr["latent_academic_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
-        tr["latent_academic_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
-        te["latent_academic_1"] = fa_acad.transform(X_ac_te)[:, 0]
-        te["latent_academic_2"] = fa_acad.transform(X_ac_te)[:, 1]
+        tr["varimax_academic_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
+        tr["varimax_academic_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
+        te["varimax_academic_1"] = fa_acad.transform(X_ac_te)[:, 0]
+        te["varimax_academic_2"] = fa_acad.transform(X_ac_te)[:, 1]
 
-    fa_lab = FactorAnalysis(n_components=2, random_state=42)
+    # Block 2: Labour Momentum (Varimax Rotated)
+    fa_lab = FactorAnalysis(n_components=2, rotation="varimax", random_state=42)
     X_lb_tr = scl.fit_transform(imp.fit_transform(tr[labour_cols]))
     X_lb_te = scl.transform(imp.transform(te[labour_cols]))
-    tr["latent_labour_1"] = fa_lab.fit_transform(X_lb_tr)[:, 0]
-    tr["latent_labour_2"] = fa_lab.fit_transform(X_lb_tr)[:, 1]
-    te["latent_labour_1"] = fa_lab.transform(X_lb_te)[:, 0]
-    te["latent_labour_2"] = fa_lab.transform(X_lb_te)[:, 1]
+    tr["varimax_labour_1"] = fa_lab.fit_transform(X_lb_tr)[:, 0]
+    tr["varimax_labour_2"] = fa_lab.fit_transform(X_lb_tr)[:, 1]
+    te["varimax_labour_1"] = fa_lab.transform(X_lb_te)[:, 0]
+    te["varimax_labour_2"] = fa_lab.transform(X_lb_te)[:, 1]
 
-    # PLS Path
+    # Block 3: Socio-Economic Capital (Varimax Rotated)
+    fa_soc = FactorAnalysis(n_components=2, rotation="varimax", random_state=42)
+    X_sc_tr = scl.fit_transform(imp.fit_transform(tr[socio_cols]))
+    X_sc_te = scl.transform(imp.transform(te[socio_cols]))
+    tr["varimax_socio_1"] = fa_soc.fit_transform(X_sc_tr)[:, 0]
+    tr["varimax_socio_2"] = fa_soc.fit_transform(X_sc_tr)[:, 1]
+    te["varimax_socio_1"] = fa_soc.transform(X_sc_te)[:, 0]
+    te["varimax_socio_2"] = fa_soc.transform(X_sc_te)[:, 1]
+
+    # Block 4: Supervised PLS Path Vectors (2 Components)
     all_num = acad_cols + labour_cols + socio_cols
     pls = PLSRegression(n_components=2)
     X_pls_tr = imp.fit_transform(tr[all_num])
     X_pls_te = imp.transform(te[all_num])
     pls.fit(X_pls_tr, tr[target])
-    tr["pls_latent_1"] = pls.transform(X_pls_tr)[:, 0]
-    tr["pls_latent_2"] = pls.transform(X_pls_tr)[:, 1]
-    te["pls_latent_1"] = pls.transform(X_pls_te)[:, 0]
-    te["pls_latent_2"] = pls.transform(X_pls_te)[:, 1]
+    tr["pls_structural_1"] = pls.transform(X_pls_tr)[:, 0]
+    tr["pls_structural_2"] = pls.transform(X_pls_tr)[:, 1]
+    te["pls_structural_1"] = pls.transform(X_pls_te)[:, 0]
+    te["pls_structural_2"] = pls.transform(X_pls_te)[:, 1]
 
     return tr, te
 
@@ -187,50 +198,56 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. SVM & DISCRIMINATIVE CANDIDATE SUITE
+# 3. HIGH-PRECISION REGULARIZED MODEL SUITE
 # ============================================================
 
-def get_svm_candidate_models(seed=42):
-    """Returns a rich suite of Support Vector Machines and Logistic Anchors."""
-    
-    # 1. Linear SVM with Platt Sigmoid Calibration (C=0.08)
-    lsvc_008 = LinearSVC(C=0.08, dual=False, max_iter=2000, random_state=seed)
-    svm_linear_008 = CalibratedClassifierCV(estimator=lsvc_008, method="sigmoid", cv=3)
-
-    # 2. Linear SVM with Platt Sigmoid Calibration (C=0.15)
-    lsvc_015 = LinearSVC(C=0.15, dual=False, max_iter=2000, random_state=seed)
-    svm_linear_015 = CalibratedClassifierCV(estimator=lsvc_015, method="sigmoid", cv=3)
-
-    # 3. Non-Linear RBF Kernel SVM (C=1.0)
-    svm_rbf_10 = SVC(C=1.0, kernel="rbf", gamma="scale", probability=True, random_state=seed)
-
-    # 4. Non-Linear RBF Kernel SVM (C=0.5)
-    svm_rbf_05 = SVC(C=0.5, kernel="rbf", gamma="scale", probability=True, random_state=seed)
-
-    # 5. Proven Logistic Regression Champions
-    logreg_008 = LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed)
-    logreg_010 = LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed)
-    logreg_elastic = LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed)
-
-    # 6. Neural MLP
-    mlp = MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                        batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                        n_iter_no_change=20, validation_fraction=0.15, random_state=seed)
-
+def get_champion_models(seed=42):
+    """Returns the precision suite of regularized linear models + neural MLP."""
     return {
-        "Calibrated_Linear_SVM_C008": (svm_linear_008, False),
-        "Calibrated_Linear_SVM_C015": (svm_linear_015, False),
-        "RBF_Kernel_SVM_C10": (svm_rbf_10, False),
-        "RBF_Kernel_SVM_C05": (svm_rbf_05, False),
-        "LogReg_L2_C008": (logreg_008, False),
-        "LogReg_L2_C010": (logreg_010, False),
-        "LogReg_ElasticNet_C010": (logreg_elastic, False),
-        "MLP_Medium_64_32": (mlp, False)
+        "LogReg_L2_C006": (
+            LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False,
+            "linear"
+        ),
+        "LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False,
+            "linear"
+        ),
+        "LogReg_L2_C010": (
+            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False,
+            "linear"
+        ),
+        "LogReg_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            False,
+            "linear"
+        ),
+        "LogReg_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            False,
+            "linear"
+        ),
+        "Quantile_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            True,
+            "linear"
+        ),
+        "MLP_Medium_64_32": (
+            MLPClassifier(
+                hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
+                batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                n_iter_no_change=20, validation_fraction=0.15, random_state=seed
+            ),
+            False,
+            "neural"
+        )
     }
 
 
 # ============================================================
-# 4. LOAD AND VALIDATE ON SEQUENTIAL ROUND DATASETS
+# 4. LOAD & BENCHMARK ON SEQUENTIAL ROUND DATASETS
 # ============================================================
 
 print("\n============================================")
@@ -251,7 +268,7 @@ if ROUND_DIR.exists():
             r_test_raw = pd.read_csv(test_file)
 
             if target in r_train_raw.columns and target in r_test_raw.columns:
-                r_train_clean, r_test_clean = extract_features_with_sem(r_train_raw, r_test_raw)
+                r_train_clean, r_test_clean = extract_varimax_sem_features(r_train_raw, r_test_raw)
 
                 common_features = [c for c in r_train_clean.columns if c in r_test_clean.columns and c != target]
                 y_tr_vals = r_train_clean[target]
@@ -269,14 +286,14 @@ if ROUND_DIR.exists():
 
 
 # ============================================================
-# 5. RUN SVM TOURNAMENT ON ROUNDS 6, 7, 8
+# 5. RUN TOURNAMENT ON ROUNDS 6, 7, 8
 # ============================================================
 
 print("\n============================================")
-print("BENCHMARKING SUPPORT VECTOR MACHINES ACROSS ROUNDS")
+print("BENCHMARKING VARIMAX-SEM MODELS ACROSS ROUNDS")
 print("============================================")
 
-candidate_dict = get_svm_candidate_models(seed=42)
+candidate_dict = get_champion_models(seed=42)
 tournament_scores = {name: [] for name in candidate_dict.keys()}
 round_names = []
 
@@ -297,9 +314,9 @@ for r_data in round_data_list:
     cat_cols = X_tr.select_dtypes(include=["object", "category"]).columns.tolist()
     num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
 
-    models_dict = get_svm_candidate_models(seed=42)
+    models_dict = get_champion_models(seed=42)
 
-    for model_name, (model_obj, use_quantile) in models_dict.items():
+    for model_name, (model_obj, use_quantile, _) in models_dict.items():
         preprocessor = build_preprocessor(num_cols, cat_cols, use_quantile=use_quantile)
         pipe = Pipeline(steps=[
             ("preprocessor", preprocessor),
@@ -322,27 +339,24 @@ for model_name, scores in tournament_scores.items():
 leaderboard_df = pd.DataFrame(results_table).sort_values(by="Mean Round AUC", ascending=False).reset_index(drop=True)
 
 print("\n============================================")
-print("SVM TOURNAMENT LEADERBOARD")
+print("VARIMAX-SEM TOURNAMENT LEADERBOARD")
 print("============================================")
 print(leaderboard_df.to_string(index=False))
 
-top_performers = leaderboard_df.head(4)["Model Architecture"].tolist()
-print(f"\n🏆 TOP CHAMPIONS SELECTED: {top_performers}")
-
 
 # ============================================================
-# 6. MULTI-SEED MAXIMUM-MARGIN TITAN INFERENCE (35 MODELS)
+# 6. TRAIN 10-SEED 70-MODEL TITAN ENGINE ON FULL DATASET
 # ============================================================
 
 print("\n============================================")
-print("TRAINING MULTI-SEED SVM-TITAN ENSEMBLE ON FULL DATASET")
+print("TRAINING 10-SEED 70-MODEL TITAN ENGINE ON FULL DATASET")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
 
-train_clean, test_clean = extract_features_with_sem(train_raw, test_raw)
+train_clean, test_clean = extract_varimax_sem_features(train_raw, test_raw)
 
 common_cols = [c for c in train_clean.columns if c in test_clean.columns and c != target]
 
@@ -359,19 +373,23 @@ if high_cardinality:
 categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
 numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
 
-print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical (incl. SEM), {len(categorical_features)} categorical")
+print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical (incl. 8 Varimax-SEM Factors), {len(categorical_features)} categorical")
 
-SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
-all_model_logits = []
+SEEDS = [42, 101, 777, 2024, 999, 1337, 555, 888, 314, 271]
 
-for m_idx, m_name in enumerate(top_performers):
-    print(f" -> Fitting Champion #{m_idx + 1}: {m_name} across {len(SEEDS)} seeds...")
+linear_logits_list = []
+neural_logits_list = []
+
+model_dict_sample = get_champion_models(seed=42)
+
+for model_name, (_, use_quantile, model_family) in model_dict_sample.items():
+    print(f" -> Training {model_name} ({model_family.upper()}) across {len(SEEDS)} seeds...")
 
     for s_idx, seed in enumerate(SEEDS):
-        candidate_pool = get_svm_candidate_models(seed=seed)
-        model_estimator, use_quantile = candidate_pool[m_name]
+        models_pool = get_champion_models(seed=seed)
+        model_estimator, use_q, _ = models_pool[model_name]
 
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
         pipe = Pipeline(steps=[
             ("preprocessor", preprocessor),
             ("model", model_estimator)
@@ -382,11 +400,20 @@ for m_idx, m_name in enumerate(top_performers):
         # Convert to log-odds (logit space)
         probs_clipped = np.clip(probs, 1e-6, 1.0 - 1e-6)
         logits = np.log(probs_clipped / (1.0 - probs_clipped))
-        all_model_logits.append(logits)
 
-# Logit-Space Average & Sigmoid Conversion
-mean_logits = np.mean(all_model_logits, axis=0)
-final_probabilities = 1.0 / (1.0 + np.exp(-mean_logits))
+        if model_family == "linear":
+            linear_logits_list.append(logits)
+        else:
+            neural_logits_list.append(logits)
+
+# 80% Linear Champions + 20% Neural MLP in Logit Space
+mean_linear_logits = np.mean(linear_logits_list, axis=0)
+mean_neural_logits = np.mean(neural_logits_list, axis=0)
+
+titan_logits = 0.80 * mean_linear_logits + 0.20 * mean_neural_logits
+
+# Temperature calibration (T = 1.02)
+final_probabilities = 1.0 / (1.0 + np.exp(-(titan_logits / 1.02)))
 
 
 # ============================================================
@@ -400,7 +427,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp63_svm_maximum_margin_ensemble.csv"
+output_file = "submission_exp64_varimax_sem_super_champion.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -415,7 +442,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 63 COMPLETE")
+print("EXPERIMENT 64 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -429,9 +456,9 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 51 Base Titan Hybrid           : 0.65693")
-print("Exp 59 Pure SEM Latent Titan       : 0.65832 (Personal Best)")
-print("Exp 63 SVM Maximum-Margin Ensemble : READY")
+print("Exp 51 Base Titan Hybrid            : 0.65693")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832 (Personal Best)")
+print("Exp 64 Varimax-SEM Super-Champion   : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
