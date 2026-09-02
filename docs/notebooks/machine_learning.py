@@ -1,6 +1,6 @@
 # ============================================================
 # EXPERIMENT 63 — SUPPORT VECTOR MACHINES (SVM) & LATENT ENSEMBLE
-# (FIXED: STRICT DTYPE GUARDS, CALIBRATED SVMs, SEM & TITAN BLEND)
+# (FIXED: SAFE ROUND TARGET CLEANING, CALIBRATED SVMs & SEM BLEND)
 # ============================================================
 
 import pandas as pd
@@ -42,7 +42,7 @@ if not ROUND_DIR.exists():
 
 
 # ============================================================
-# 2. FEATURE PARSERS & SEM LATENT FACTORS (WITH DTYPE GUARDS)
+# 2. FEATURE PARSERS & SEM LATENT FACTORS (SAFE TARGET CLEANING)
 # ============================================================
 
 target = "employed_status"
@@ -80,10 +80,17 @@ def extract_features_with_sem(train_df, test_df):
     tr = train_df.copy()
     te = test_df.copy()
 
-    # Clean target
-    tr[target] = pd.to_numeric(tr[target], errors="coerce")
-    tr = tr.dropna(subset=[target]).copy()
-    tr[target] = tr[target].astype(int)
+    # Clean target in training set
+    if target in tr.columns:
+        tr[target] = pd.to_numeric(tr[target], errors="coerce")
+        tr = tr.dropna(subset=[target]).copy()
+        tr[target] = tr[target].astype(int)
+
+    # Clean target in test set if present (for round validation holdouts)
+    if target in te.columns:
+        te[target] = pd.to_numeric(te[target], errors="coerce")
+        te = te.dropna(subset=[target]).copy()
+        te[target] = te[target].astype(int)
 
     for df in [tr, te]:
         if "anonymised_id" in df.columns:
