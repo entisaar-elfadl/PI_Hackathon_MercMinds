@@ -1,12 +1,11 @@
 # ============================================================
-# EXPERIMENT 65 — THE OLYMPIAN MULTI-CHAMPION CONSENSUS
-# (PRECISION LOG-ODDS & RANK BLEND OF ALL >= 0.657 CHAMPIONS)
+# EXPERIMENT 66 — THE PRECISION SEM TITAN-120
+# (120-MODEL MULTI-SEED ENSEMBLE OVER PURE EXP 59 SEM LATENT SPACE)
 # ============================================================
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from scipy.stats import rankdata
 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -19,8 +18,8 @@ from sklearn.neural_network import MLPClassifier
 
 
 print("============================================")
-print("EXPERIMENT 65")
-print("THE OLYMPIAN MULTI-CHAMPION CONSENSUS")
+print("EXPERIMENT 66")
+print("THE PRECISION SEM TITAN-120 ENSEMBLE")
 print("============================================")
 
 
@@ -36,113 +35,88 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. LOAD TEST IDs & DATA
+# 2. EXACT EXP 59 PURE SEM FEATURE PIPELINE
 # ============================================================
 
-test_raw = pd.read_csv(DATA_DIR / "test.csv")
-train_raw = pd.read_csv(DATA_DIR / "train.csv")
-test_ids = test_raw["anonymised_id"].copy()
 target = "employed_status"
 
-print(f"Test cohort observations: {len(test_raw)}")
-
-
-# ============================================================
-# 3. DISCOVER ALL TOP-TIER SUBMISSION FILES
-# ============================================================
-
-print("\n============================================")
-print("DISCOVERING TOP-TIER CHAMPION SUBMISSIONS")
-print("============================================")
-
-# Priority leaderboard weights based on empirical public scores
-champion_registry = {
-    "submission_exp59_sem_latent_titan_ensemble.csv": 0.35,  # 0.65832 Peak
-    "submission_exp61_dual_manifold_sem_blend.csv": 0.25,    # 0.65787
-    "submission_exp64_varimax_sem_super_champion.csv": 0.20, # 0.65768
-    "submission_exp60_sem_longitudinal_super_titan.csv": 0.10, # 0.65735
-    "submission_exp51_restored_titan_ensemble.csv": 0.10     # 0.65693
-}
-
-found_logits = []
-found_ranks = []
-normalized_weights = []
-
-for filename, weight in champion_registry.items():
-    f_path = CURRENT_DIR / filename
-    if f_path.exists():
-        sub_df = pd.read_csv(f_path)
-        if target in sub_df.columns and len(sub_df) == len(test_raw):
-            p = np.clip(sub_df[target].to_numpy(), 1e-6, 1.0 - 1e-6)
-            
-            # Logit representation
-            z = np.log(p / (1.0 - p))
-            # Percentile Rank representation
-            r = rankdata(p) / len(p)
-            
-            found_logits.append(z)
-            found_ranks.append(r)
-            normalized_weights.append(weight)
-            print(f" -> [FOUND] {filename:<50} | Target Weight: {weight*100:.0f}%")
+def parse_matric_band(val):
+    """Converts matric percentage strings into continuous numeric marks."""
+    if pd.isna(val):
+        return np.nan
+    s = str(val).replace("%", "").strip()
+    if "-" in s:
+        parts = s.split("-")
+        try:
+            return (float(parts[0]) + float(parts[1])) / 2.0
+        except Exception:
+            return np.nan
+    elif "<" in s:
+        try:
+            return float(s.replace("<", "").strip()) / 2.0
+        except Exception:
+            return np.nan
+    elif ">" in s:
+        try:
+            return float(s.replace(">", "").strip()) + 5.0
+        except Exception:
+            return np.nan
     else:
-        print(f" -> [MISSING] {filename}")
+        try:
+            return float(s)
+        except Exception:
+            return np.nan
 
 
-# ============================================================
-# 4. STANDALONE ENGINE FALLBACK (IF < 2 FILES FOUND)
-# ============================================================
+def extract_pure_sem_features(train_df, test_df):
+    """Extracts the exact winning Exp 59 SEM Latent Factor representation."""
+    tr = train_df.copy()
+    te = test_df.copy()
 
-if len(found_logits) < 2:
-    print("\nℹ️ Fewer than 2 past files found. Generating fresh Exp 59 Pure SEM Engine on the fly...")
-
-    def parse_matric_band(val):
-        if pd.isna(val): return np.nan
-        s = str(val).replace("%", "").strip()
-        if "-" in s:
-            parts = s.split("-")
-            try: return (float(parts[0]) + float(parts[1])) / 2.0
-            except: return np.nan
-        elif "<" in s:
-            try: return float(s.replace("<", "").strip()) / 2.0
-            except: return np.nan
-        elif ">" in s:
-            try: return float(s.replace(">", "").strip()) + 5.0
-            except: return np.nan
-        else:
-            try: return float(s)
-            except: return np.nan
-
-    tr = train_raw.copy()
-    te = test_raw.copy()
+    # Clean target
     tr[target] = pd.to_numeric(tr[target], errors="coerce")
     tr = tr.dropna(subset=[target]).copy()
     tr[target] = tr[target].astype(int)
 
     for df in [tr, te]:
-        if "anonymised_id" in df.columns: df.drop(columns=["anonymised_id"], inplace=True)
+        if "anonymised_id" in df.columns:
+            df.drop(columns=["anonymised_id"], inplace=True)
+
         if "survey_date" in df.columns:
             df["survey_date"] = pd.to_datetime(df["survey_date"], errors="coerce")
             df["survey_year"] = df["survey_date"].dt.year
             df["survey_month"] = df["survey_date"].dt.month
             df["survey_dayofyear"] = df["survey_date"].dt.dayofyear
             df.drop(columns=["survey_date"], inplace=True)
+
         df["is_first_time"] = df["employed_lag"].isna().astype(float)
         df["employed_lag_num"] = df["employed_lag"].fillna(-1.0).astype(float)
         df["tenure_lag_log"] = np.log1p(pd.to_numeric(df.get("tenure_lag", 0), errors="coerce").fillna(0).clip(lower=0))
         df["days_since_obs_log"] = np.log1p(pd.to_numeric(df.get("days_since_last_obs", 0), errors="coerce").fillna(0).clip(lower=0))
+
         for m in ["matric_englishhome", "matric_englishadd", "matric_mathpure", "matric_physicalscience", "matric_mathlit"]:
-            if m in df.columns: df[f"{m}_score"] = df[m].apply(parse_matric_band).fillna(-1.0)
+            if m in df.columns:
+                df[f"{m}_score"] = df[m].apply(parse_matric_band).fillna(-1.0)
+
         df["school_quintile_num"] = pd.to_numeric(df.get("school_quintile", 0), errors="coerce").fillna(0.0)
         df["work_readiness_num"] = pd.to_numeric(df.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
         df["age_clean"] = pd.to_numeric(df.get("age", 22), errors="coerce").fillna(22.0).clip(18, 35)
-        for col in df.columns:
-            if col != target and df[col].dtype == "object":
-                converted = pd.to_numeric(df[col], errors="coerce")
-                if converted.notna().sum() > 0.6 * df[col].notna().sum(): df[col] = converted
 
+        for col in df.columns:
+            if df[col].dtype == "bool":
+                df[col] = df[col].astype(float)
+            elif col != target and df[col].dtype == "object":
+                converted = pd.to_numeric(df[col], errors="coerce")
+                if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
+                    df[col] = converted
+
+    # ------------------------------------------------------------
+    # SEM LATENT FACTOR BLOCKS (EXACT EXP 59 SETUP)
+    # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
+
     imp = SimpleImputer(strategy="median")
     scl = StandardScaler()
 
@@ -181,74 +155,173 @@ if len(found_logits) < 2:
     te["pls_structural_latent_1"] = pls.transform(X_pls_te)[:, 0]
     te["pls_structural_latent_2"] = pls.transform(X_pls_te)[:, 1]
 
-    common_cols = [c for c in tr.columns if c in te.columns and c != target]
-    y_full = tr[target].reset_index(drop=True)
-    X_full = tr[common_cols].reset_index(drop=True)
-    X_test_full = te[common_cols].reset_index(drop=True)
+    return tr, te
 
-    cat_cols = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
-    high_c = [c for c in cat_cols if X_full[c].nunique(dropna=True) > 100]
-    if high_c:
-        X_full = X_full.drop(columns=high_c)
-        X_test_full = X_test_full.drop(columns=high_c)
 
-    cat_cols = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
-    num_cols = X_full.select_dtypes(include=[np.number]).columns.tolist()
+def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
+    """Builds standard or quantile-normalized preprocessor."""
+    transformers = []
 
-    models = {
-        "LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000), False, "linear"),
-        "LogReg_L2_C010": (LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000), False, "linear"),
-        "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000), False, "linear"),
-        "Quantile_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000), True, "linear"),
-        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01, max_iter=350, early_stopping=True), False, "neural")
-    }
+    if len(numerical_cols) > 0:
+        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
+        numeric_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", scaler)
+        ])
+        transformers.append(("num", numeric_transformer, numerical_cols))
 
-    SEEDS = [42, 101, 777, 2024, 999, 1337, 555]
-    lin_l = []
-    neu_l = []
+    if len(categorical_cols) > 0:
+        categorical_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+        ])
+        transformers.append(("cat", categorical_transformer, categorical_cols))
 
-    for m_name, (estimator, use_q, fam) in models.items():
-        for s in SEEDS:
-            scaler = QuantileTransformer(output_distribution="normal", random_state=s) if use_q else StandardScaler()
-            preproc = ColumnTransformer([
-                ("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("scl", scaler)]), num_cols),
-                ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), cat_cols)
-            ])
-            est_clone = LogisticRegression(C=getattr(estimator, "C", 0.1), penalty=getattr(estimator, "penalty", "l2"), solver=getattr(estimator, "solver", "lbfgs"), l1_ratio=getattr(estimator, "l1_ratio", None), max_iter=1000, random_state=s) if fam == "linear" else MLPClassifier(hidden_layer_sizes=(64, 32), alpha=0.01, max_iter=350, random_state=s)
-            pipe = Pipeline([("preproc", preproc), ("model", est_clone)])
-            pipe.fit(X_full, y_full)
-            p = np.clip(pipe.predict_proba(X_test_full)[:, 1], 1e-6, 1.0 - 1e-6)
-            z_val = np.log(p / (1.0 - p))
-            if fam == "linear": lin_l.append(z_val)
-            else: neu_l.append(z_val)
-
-    mean_z = 0.80 * np.mean(lin_l, axis=0) + 0.20 * np.mean(neu_l, axis=0)
-    found_logits.append(mean_z)
-    found_ranks.append(rankdata(mean_z) / len(mean_z))
-    normalized_weights.append(1.0)
+    return ColumnTransformer(transformers=transformers)
 
 
 # ============================================================
-# 5. OLYMPIAN CONSENSUS FUSION (LOGIT + RANK RE-MAPPING)
+# 3. 10-MODEL PRECISION REGULARIZATION SUITE
+# ============================================================
+
+def get_precision_models(seed=42):
+    """Returns 10 diverse models across regularizations and neural depths."""
+    return {
+        # Linear L2 Grid
+        "LogReg_L2_C006": (
+            LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        "LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        "LogReg_L2_C010": (
+            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        "LogReg_L2_C012": (
+            LogisticRegression(C=0.12, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        # ElasticNet SAGA Grid
+        "LogReg_ElasticNet_C008_L1_010": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        "LogReg_ElasticNet_C010_L1_015": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            False, "linear"
+        ),
+        # Quantile-Gaussian Linear Models
+        "Quantile_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            True, "linear"
+        ),
+        "Quantile_LogReg_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True, "linear"
+        ),
+        # Neural Multi-Layer Perceptrons
+        "MLP_Medium_64_32": (
+            MLPClassifier(
+                hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
+                batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                n_iter_no_change=20, validation_fraction=0.15, random_state=seed
+            ),
+            False, "neural"
+        ),
+        "MLP_Deep_128_64": (
+            MLPClassifier(
+                hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100
+            ),
+            False, "neural"
+        )
+    }
+
+
+# ============================================================
+# 4. LOAD & PREPARE SEM LATENT FEATURE MATRIX
 # ============================================================
 
 print("\n============================================")
-print("COMPUTING OLYMPIAN CONSENSUS INTEGRATION")
+print("EXTRACTING PURE EXP 59 SEM LATENT FACTORS")
 print("============================================")
 
-total_w = sum(normalized_weights)
-weights_arr = np.array([w / total_w for w in normalized_weights])
+train_raw = pd.read_csv(DATA_DIR / "train.csv")
+test_raw = pd.read_csv(DATA_DIR / "test.csv")
+test_ids = test_raw["anonymised_id"].copy()
 
-# 1. Precision Log-Odds Blend
-weighted_logits = sum(w * z for w, z in zip(weights_arr, found_logits))
-prob_from_logits = 1.0 / (1.0 + np.exp(-weighted_logits))
+train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
 
-# 2. Monotonic Rank Consensus
-weighted_ranks = sum(w * r for w, r in zip(weights_arr, found_ranks))
+common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
 
-# 3. Optimal Hybrid Fusion (70% Logit Probability + 30% Rank Re-projection)
-# Smoothly interpolates calibrated probabilities with rank density
-final_probabilities = 0.70 * prob_from_logits + 0.30 * (weighted_ranks * (prob_from_logits.max() - prob_from_logits.min()) + prob_from_logits.min())
+y_full = train_sem[target].reset_index(drop=True)
+X_full = train_sem[common_cols].reset_index(drop=True)
+X_test_full = test_sem[common_cols].reset_index(drop=True)
+
+# Drop high-cardinality categorical (>100)
+categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
+high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
+if high_cardinality:
+    X_full = X_full.drop(columns=high_cardinality)
+    X_test_full = X_test_full.drop(columns=high_cardinality)
+
+categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
+numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
+
+print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical (incl. 8 SEM Latent Factors), {len(categorical_features)} categorical")
+
+
+# ============================================================
+# 5. TRAIN 120-MODEL PRECISION TITAN ENGINE (12 SEEDS x 10 MODELS)
+# ============================================================
+
+print("\n============================================")
+print("TRAINING 120-MODEL TITAN ENGINE (12 SEEDS x 10 MODELS)")
+print("============================================")
+
+SEEDS = [42, 101, 777, 2024, 999, 1337, 555, 888, 314, 271, 1618, 404]
+
+linear_logits_list = []
+neural_logits_list = []
+
+model_dict_sample = get_precision_models(seed=42)
+
+for model_name, (_, use_quantile, model_family) in model_dict_sample.items():
+    print(f" -> Training {model_name:<32} ({model_family.upper()}) across {len(SEEDS)} seeds...")
+
+    for s_idx, seed in enumerate(SEEDS):
+        models_pool = get_precision_models(seed=seed)
+        model_estimator, use_q, _ = models_pool[model_name]
+
+        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
+        pipe = Pipeline(steps=[
+            ("preprocessor", preprocessor),
+            ("model", model_estimator)
+        ])
+        pipe.fit(X_full, y_full)
+        probs = pipe.predict_proba(X_test_full)[:, 1]
+
+        # Convert to log-odds (logit space)
+        probs_clipped = np.clip(probs, 1e-6, 1.0 - 1e-6)
+        logits = np.log(probs_clipped / (1.0 - probs_clipped))
+
+        if model_family == "linear":
+            linear_logits_list.append(logits)
+        else:
+            neural_logits_list.append(logits)
+
+# 82% Linear Champions + 18% Neural Diversity in Pure Logit Space
+mean_linear_logits = np.mean(linear_logits_list, axis=0)
+mean_neural_logits = np.mean(neural_logits_list, axis=0)
+
+final_titan_logits = 0.82 * mean_linear_logits + 0.18 * mean_neural_logits
+
+# Pure Logistic Sigmoid (No rank flattening)
+final_probabilities = 1.0 / (1.0 + np.exp(-final_titan_logits))
 
 
 # ============================================================
@@ -262,7 +335,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp65_olympian_consensus.csv"
+output_file = "submission_exp66_precision_sem_titan120.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -277,7 +350,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 65 COMPLETE")
+print("EXPERIMENT 66 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -292,10 +365,9 @@ print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
 print("Exp 51 Base Titan Hybrid            : 0.65693")
-print("Exp 64 Varimax-SEM Super-Champion   : 0.65768")
 print("Exp 61 Dual-Manifold SEM Blend      : 0.65787")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832 (Personal Best)")
-print("Exp 65 Olympian Consensus Ensemble  : READY")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832 (Current Best)")
+print("Exp 66 Precision SEM Titan-120      : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
