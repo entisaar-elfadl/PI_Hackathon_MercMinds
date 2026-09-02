@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 68 — NON-NEGATIVE SUPER LEARNER (NNLS SEM STACKING)
-# (CONSTRAINED POSITIVE META-WEIGHTING OVER EXP 59 SEM MANIFOLD)
+# EXPERIMENT 69 — 10-FOLD DEEP-ELASTIC NNLS SUPER-LEARNER
+# (10-FOLD CV, EXPANDED ELASTICNET/NEURAL SUITE, TANH MLPs & NNLS)
 # ============================================================
 
 import pandas as pd
@@ -20,8 +20,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 68")
-print("NON-NEGATIVE SUPER LEARNER (NNLS SEM STACKING)")
+print("EXPERIMENT 69")
+print("10-FOLD DEEP-ELASTIC NNLS SUPER-LEARNER")
 print("============================================")
 
 
@@ -37,7 +37,7 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. PROVEN EXP 59 PURE SEM FEATURE PIPELINE
+# 2. EXACT WINNING SEM LATENT FEATURE EXTRACTION
 # ============================================================
 
 target = "employed_status"
@@ -71,7 +71,7 @@ def parse_matric_band(val):
 
 
 def extract_pure_sem_features(train_df, test_df):
-    """Extracts the exact winning Exp 59 SEM Latent Factor representation."""
+    """Extracts the exact winning Exp 59/68 SEM Latent Factor representation."""
     tr = train_df.copy()
     te = test_df.copy()
 
@@ -113,7 +113,7 @@ def extract_pure_sem_features(train_df, test_df):
                     df[col] = converted
 
     # ------------------------------------------------------------
-    # SEM LATENT FACTOR BLOCKS (EXACT EXP 59 SETUP)
+    # SEM LATENT FACTOR BLOCKS
     # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
@@ -183,25 +183,64 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. HIGH-PERFORMING BASE MODEL DEFINITIONS
+# 3. EXPANDED DEEP-ELASTIC MODEL SUITE (10 SPECIALIZED MODELS)
 # ============================================================
 
-def get_base_model_dict(seed=42):
-    """Returns 9 diverse base models operating on the SEM manifold."""
+def get_deep_elastic_model_dict(seed=42):
+    """Returns 10 high-value models focused on ElasticNet and Multi-Activation Neural Nets."""
     return {
-        "LogReg_L2_C006": (LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_L2_C010": (LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_ElasticNet_C008": (LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed), False),
-        "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), False),
-        "Quantile_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), True),
-        "Quantile_LogReg_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), True),
-        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                           n_iter_no_change=20, validation_fraction=0.15, random_state=seed), False),
-        "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                                         batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                         n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100), False)
+        # 1. Quantile-Gaussian ElasticNet Grid
+        "Quantile_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Quantile_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Quantile_ElasticNet_C012": (
+            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True
+        ),
+        # 2. Standard Scaled ElasticNet SAGA Grid
+        "Standard_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_ElasticNet_C012": (
+            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.12, max_iter=1000, random_state=seed),
+            False
+        ),
+        # 3. Multi-Scale Neural Networks (ReLU)
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
+            False
+        ),
+        "MLP_Deep_128_64_32": (
+            MLPClassifier(hidden_layer_sizes=(128, 64, 32), activation="relu", solver="adam", alpha=0.015,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 50),
+            False
+        ),
+        "MLP_Wide_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.01,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100),
+            False
+        ),
+        # 4. Orthogonal Tanh-Activated MLP (Smooth Continuous Margins)
+        "MLP_Tanh_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.01,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 150),
+            False
+        )
     }
 
 
@@ -239,17 +278,17 @@ print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)
 
 
 # ============================================================
-# 5. 5-FOLD OOF PROBABILITY GENERATION
+# 5. 10-FOLD OOF PROBABILITY GENERATION
 # ============================================================
 
 print("\n============================================")
-print("GENERATING LEAK-FREE 5-FOLD OOF BASE PREDICTIONS")
+print("GENERATING 10-FOLD OOF BASE PREDICTIONS (90% TRAIN PER FOLD)")
 print("============================================")
 
-N_SPLITS = 5
+N_SPLITS = 10
 skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-model_names = list(get_base_model_dict(seed=42).keys())
+model_names = list(get_deep_elastic_model_dict(seed=42).keys())
 N_MODELS = len(model_names)
 
 oof_probabilities = np.zeros((len(X), N_MODELS))
@@ -259,7 +298,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
     X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
-    models_dict = get_base_model_dict(seed=42 + fold * 10)
+    models_dict = get_deep_elastic_model_dict(seed=42 + fold * 10)
 
     for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
         preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
@@ -273,40 +312,40 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
         oof_probabilities[val_idx, m_idx] = p_val
         test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-    print(f"Fold {fold + 1}/{N_SPLITS} Complete.")
+    print(f"Fold {fold + 1:02d}/{N_SPLITS} Complete.")
 
 
-# Individual OOF Scores
-print("\n--- Individual Base Model OOF ROC-AUC Scores ---")
+# Individual 10-Fold OOF Scores
+print("\n--- Individual Base Model 10-Fold OOF ROC-AUC Scores ---")
 for m_idx, m_name in enumerate(model_names):
     auc = roc_auc_score(y, oof_probabilities[:, m_idx])
-    print(f"Model {m_idx + 1:02d} ({m_name:<30}): OOF AUC = {auc:.5f}")
+    print(f"Model {m_idx + 1:02d} ({m_name:<32}): 10-Fold OOF AUC = {auc:.5f}")
 
 
 # ============================================================
-# 6. NON-NEGATIVE SUPER LEARNER (NNLS META-OPTIMIZER)
+# 6. NON-NEGATIVE SUPER LEARNER (NNLS META-OPTIMIZATION)
 # ============================================================
 
 print("\n============================================")
 print("FITTING NON-NEGATIVE CONSTRAINED META-LEARNER")
 print("============================================")
 
-# Convert OOF probabilities to Logit Space
+# Convert 10-Fold OOF probabilities to Logit Space
 oof_logits = np.zeros_like(oof_probabilities)
 for m_idx in range(N_MODELS):
     p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
     oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-# Fit Non-Negative Linear Meta-Learner (positive=True guarantees strictly w >= 0)
+# Fit Non-Negative Linear Meta-Learner (positive=True strictly guarantees w >= 0)
 nnls_meta = LinearRegression(positive=True, fit_intercept=True)
 nnls_meta.fit(oof_logits, y)
 
-# Normalize learned weights to sum to 1.0 for probability calibration
+# Normalize learned weights to sum to 1.0 for calibrated probability scaling
 raw_weights = nnls_meta.coef_
 sum_weights = np.sum(raw_weights)
 normalized_weights = raw_weights / sum_weights if sum_weights > 0 else np.ones(N_MODELS) / N_MODELS
 
-print("Learned Non-Negative Meta-Weights:")
+print("Learned 10-Fold Non-Negative Meta-Weights:")
 weight_summary = pd.DataFrame({
     "Base Model": model_names,
     "Raw Weight": raw_weights,
@@ -315,21 +354,21 @@ weight_summary = pd.DataFrame({
 
 print(weight_summary.to_string(index=False))
 
-# Calculate Meta-Learner OOF Score
+# Calculate Meta-Learner 10-Fold Stacked OOF Score
 stacked_oof_logits = np.dot(oof_logits, normalized_weights)
 stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
 stacked_oof_auc = roc_auc_score(y, stacked_oof_probs)
 
-print(f"\n🏆 Non-Negative Super Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
+print(f"\n🏆 10-Fold Non-Negative Super Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
 
 
 # ============================================================
-# 7. INFERENCE ON TEST SET (5-FOLD AVERAGED LOGITS)
+# 7. INFERENCE ON TEST SET (10-FOLD AVERAGED LOGITS)
 # ============================================================
 
-print("\nGenerating final test predictions via Non-Negative Super Learner...")
+print("\nGenerating final test predictions via 10-Fold Non-Negative Super Learner...")
 
-# Average fold test probabilities per model, then convert to logit space
+# Average 10-fold test probabilities per model, then convert to logit space
 avg_test_probs = test_fold_predictions.mean(axis=2)
 test_logits = np.zeros_like(avg_test_probs)
 
@@ -352,7 +391,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp68_nnls_sem_superlearner.csv"
+output_file = "submission_exp69_deep_elastic_nnls_superlearner.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -367,7 +406,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 68 COMPLETE")
+print("EXPERIMENT 69 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -381,10 +420,9 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 51 Base Titan Hybrid            : 0.65693")
-print("Exp 66 Precision SEM Titan-120      : 0.65809")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832 (Personal Best)")
-print(f"Exp 68 Non-Negative Super Learner   : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832")
+print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Previous Best)")
+print(f"Exp 69 10-Fold Deep-Elastic NNLS   : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
