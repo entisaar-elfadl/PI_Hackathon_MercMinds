@@ -1,6 +1,6 @@
 # ============================================================
 # EXPERIMENT 63 — SUPPORT VECTOR MACHINES (SVM) & LATENT ENSEMBLE
-# (CALIBRATED LINEAR SVM, RBF KERNEL SVM, SEM FACTORS & TITAN BLEND)
+# (FIXED: STRICT DTYPE GUARDS, CALIBRATED SVMs, SEM & TITAN BLEND)
 # ============================================================
 
 import pandas as pd
@@ -42,7 +42,7 @@ if not ROUND_DIR.exists():
 
 
 # ============================================================
-# 2. FEATURE PARSERS & SEM LATENT FACTORS
+# 2. FEATURE PARSERS & SEM LATENT FACTORS (WITH DTYPE GUARDS)
 # ============================================================
 
 target = "employed_status"
@@ -76,7 +76,7 @@ def parse_matric_band(val):
 
 
 def extract_features_with_sem(train_df, test_df):
-    """Extracts proven date/lag features and computes SEM latent factors."""
+    """Extracts proven date/lag features and computes SEM latent factors safely."""
     tr = train_df.copy()
     te = test_df.copy()
 
@@ -109,10 +109,13 @@ def extract_features_with_sem(train_df, test_df):
         df["work_readiness_num"] = pd.to_numeric(df.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
         df["age_clean"] = pd.to_numeric(df.get("age", 22), errors="coerce").fillna(22.0).clip(18, 35)
 
+        # Explicit bool-to-float & safe numeric conversion
         for col in df.columns:
-            if col != target and df[col].dtype == "object":
+            if df[col].dtype == "bool":
+                df[col] = df[col].astype(float)
+            elif col != target and df[col].dtype == "object":
                 converted = pd.to_numeric(df[col], errors="coerce")
-                if converted.notna().sum() > 0.6 * data[col].notna().sum() if "data" in locals() else True:
+                if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
     # Latent SEM Blocks
@@ -155,7 +158,7 @@ def extract_features_with_sem(train_df, test_df):
 
 
 def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    """Builds standard or quantile-normalized preprocessor."""
+    """Builds standard or quantile-normalized preprocessor with safe imputation."""
     transformers = []
 
     if len(numerical_cols) > 0:
@@ -184,17 +187,17 @@ def get_svm_candidate_models(seed=42):
     """Returns a rich suite of Support Vector Machines and Logistic Anchors."""
     
     # 1. Linear SVM with Platt Sigmoid Calibration (C=0.08)
-    lsvc_008 = LinearSVC(C=0.08, dual="auto", max_iter=2000, random_state=seed)
+    lsvc_008 = LinearSVC(C=0.08, dual=False, max_iter=2000, random_state=seed)
     svm_linear_008 = CalibratedClassifierCV(estimator=lsvc_008, method="sigmoid", cv=3)
 
     # 2. Linear SVM with Platt Sigmoid Calibration (C=0.15)
-    lsvc_015 = LinearSVC(C=0.15, dual="auto", max_iter=2000, random_state=seed)
+    lsvc_015 = LinearSVC(C=0.15, dual=False, max_iter=2000, random_state=seed)
     svm_linear_015 = CalibratedClassifierCV(estimator=lsvc_015, method="sigmoid", cv=3)
 
     # 3. Non-Linear RBF Kernel SVM (C=1.0)
     svm_rbf_10 = SVC(C=1.0, kernel="rbf", gamma="scale", probability=True, random_state=seed)
 
-    # 4. Non-Linear RBF Kernel SVM (C=0.5, Higher Regularization)
+    # 4. Non-Linear RBF Kernel SVM (C=0.5)
     svm_rbf_05 = SVC(C=0.5, kernel="rbf", gamma="scale", probability=True, random_state=seed)
 
     # 5. Proven Logistic Regression Champions
@@ -278,13 +281,13 @@ for r_data in round_data_list:
     X_te = r_data["X_test"].copy()
     y_te = r_data["y_test"].copy()
 
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    cat_cols = X_tr.select_dtypes(include=["object", "category"]).columns.tolist()
     high_card = [c for c in cat_cols if X_tr[c].nunique(dropna=True) > 100]
     if high_card:
         X_tr = X_tr.drop(columns=high_card)
         X_te = X_te.drop(columns=high_card)
 
-    cat_cols = X_tr.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    cat_cols = X_tr.select_dtypes(include=["object", "category"]).columns.tolist()
     num_cols = X_tr.select_dtypes(include=[np.number]).columns.tolist()
 
     models_dict = get_svm_candidate_models(seed=42)
@@ -340,13 +343,13 @@ y_full = train_clean[target].reset_index(drop=True)
 X_full = train_clean[common_cols].reset_index(drop=True)
 X_test_full = test_clean[common_cols].reset_index(drop=True)
 
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
 if high_cardinality:
     X_full = X_full.drop(columns=high_cardinality)
     X_test_full = X_test_full.drop(columns=high_cardinality)
 
-categorical_features = X_full.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
 numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
 
 print(f"Full dataset: {len(X_full)} observations | Features: {len(numerical_features)} numerical (incl. SEM), {len(categorical_features)} categorical")
