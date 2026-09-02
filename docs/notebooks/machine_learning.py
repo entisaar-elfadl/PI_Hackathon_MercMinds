@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 69 — 10-FOLD DEEP-ELASTIC NNLS SUPER-LEARNER
-# (10-FOLD CV, EXPANDED ELASTICNET/NEURAL SUITE, TANH MLPs & NNLS)
+# EXPERIMENT 70 — REPEATED 5-FOLD NNLS SUPER-LEARNER
+# (5 REPEATED 5-FOLD SEEDS x 4-PILLAR EXP 68 ENGINE = 100 SUB-MODELS)
 # ============================================================
 
 import pandas as pd
@@ -20,8 +20,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 69")
-print("10-FOLD DEEP-ELASTIC NNLS SUPER-LEARNER")
+print("EXPERIMENT 70")
+print("REPEATED 5-FOLD NNLS SUPER-LEARNER (100 SUB-MODELS)")
 print("============================================")
 
 
@@ -37,7 +37,7 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. EXACT WINNING SEM LATENT FEATURE EXTRACTION
+# 2. PROVEN 0.66054 PURE SEM FEATURE PIPELINE
 # ============================================================
 
 target = "employed_status"
@@ -113,7 +113,7 @@ def extract_pure_sem_features(train_df, test_df):
                     df[col] = converted
 
     # ------------------------------------------------------------
-    # SEM LATENT FACTOR BLOCKS
+    # SEM LATENT FACTOR BLOCKS (EXACT EXP 59/68 SETUP)
     # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
@@ -183,62 +183,38 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. EXPANDED DEEP-ELASTIC MODEL SUITE (10 SPECIALIZED MODELS)
+# 3. PROVEN EXP 68 BASE MODEL DEFINITIONS
 # ============================================================
 
-def get_deep_elastic_model_dict(seed=42):
-    """Returns 10 high-value models focused on ElasticNet and Multi-Activation Neural Nets."""
+def get_base_model_dict(seed=42):
+    """Returns the proven 4-pillar model suite from Exp 68 + fine regularizations."""
     return {
-        # 1. Quantile-Gaussian ElasticNet Grid
-        "Quantile_ElasticNet_C008": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
-            True
-        ),
-        "Quantile_ElasticNet_C010": (
+        "Quantile_LogReg_ElasticNet_C010": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
             True
         ),
-        "Quantile_ElasticNet_C012": (
-            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+        "Quantile_LogReg_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
             True
         ),
-        # 2. Standard Scaled ElasticNet SAGA Grid
-        "Standard_ElasticNet_C008": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
-            False
-        ),
-        "Standard_ElasticNet_C010": (
+        "Standard_LogReg_ElasticNet_C010": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
             False
         ),
-        "Standard_ElasticNet_C012": (
-            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.12, max_iter=1000, random_state=seed),
+        "Standard_LogReg_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
             False
         ),
-        # 3. Multi-Scale Neural Networks (ReLU)
-        "MLP_Medium_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
-            False
-        ),
-        "MLP_Deep_128_64_32": (
-            MLPClassifier(hidden_layer_sizes=(128, 64, 32), activation="relu", solver="adam", alpha=0.015,
+        "MLP_Deep_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
                           n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 50),
             False
         ),
-        "MLP_Wide_128_64": (
-            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.01,
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100),
-            False
-        ),
-        # 4. Orthogonal Tanh-Activated MLP (Smooth Continuous Margins)
-        "MLP_Tanh_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.01,
-                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 150),
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
             False
         )
     }
@@ -249,7 +225,7 @@ def get_deep_elastic_model_dict(seed=42):
 # ============================================================
 
 print("\n============================================")
-print("EXTRACTING PURE EXP 59 SEM LATENT FACTORS")
+print("EXTRACTING PURE EXP 59/68 SEM LATENT FACTORS")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
@@ -278,110 +254,100 @@ print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)
 
 
 # ============================================================
-# 5. 10-FOLD OOF PROBABILITY GENERATION
+# 5. REPEATED 5-FOLD NNLS TRAINING (5 SEEDS x 5 FOLDS = 25 FOLDS)
 # ============================================================
 
 print("\n============================================")
-print("GENERATING 10-FOLD OOF BASE PREDICTIONS (90% TRAIN PER FOLD)")
+print("RUNNING REPEATED 5-FOLD NNLS OPTIMIZATION (5 SEEDS)")
 print("============================================")
 
-N_SPLITS = 10
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+REPEATED_SEEDS = [42, 101, 777, 2024, 999]
+N_SPLITS = 5
 
-model_names = list(get_deep_elastic_model_dict(seed=42).keys())
+model_names = list(get_base_model_dict(seed=42).keys())
 N_MODELS = len(model_names)
 
-oof_probabilities = np.zeros((len(X), N_MODELS))
-test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+all_superlearner_test_logits = []
+all_seed_oof_scores = []
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
-    X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
+for s_idx, cv_seed in enumerate(REPEATED_SEEDS):
+    print(f"\n============================================")
+    print(f"--- Running 5-Fold Partition Seed {cv_seed} ({s_idx + 1}/{len(REPEATED_SEEDS)}) ---")
+    print(f"============================================")
 
-    models_dict = get_deep_elastic_model_dict(seed=42 + fold * 10)
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=cv_seed)
 
-    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline([
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
-        ])
-        pipe.fit(X_tr_f, y_tr_f)
-        
-        p_val = pipe.predict_proba(X_va_f)[:, 1]
-        oof_probabilities[val_idx, m_idx] = p_val
-        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+    oof_probabilities = np.zeros((len(X), N_MODELS))
+    test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
-    print(f"Fold {fold + 1:02d}/{N_SPLITS} Complete.")
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+        X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+        X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
+        models_dict = get_base_model_dict(seed=cv_seed + fold * 10)
 
-# Individual 10-Fold OOF Scores
-print("\n--- Individual Base Model 10-Fold OOF ROC-AUC Scores ---")
-for m_idx, m_name in enumerate(model_names):
-    auc = roc_auc_score(y, oof_probabilities[:, m_idx])
-    print(f"Model {m_idx + 1:02d} ({m_name:<32}): 10-Fold OOF AUC = {auc:.5f}")
+        for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
+            preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+            pipe = Pipeline([
+                ("preprocessor", preprocessor),
+                ("model", model_obj)
+            ])
+            pipe.fit(X_tr_f, y_tr_f)
+            
+            p_val = pipe.predict_proba(X_va_f)[:, 1]
+            oof_probabilities[val_idx, m_idx] = p_val
+            test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+
+        print(f"  -> Fold {fold + 1}/{N_SPLITS} Complete.")
+
+    # Convert OOF to Logit Space
+    oof_logits = np.zeros_like(oof_probabilities)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
+        oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+    # Fit NNLS Meta-Learner on this seed
+    nnls_meta = LinearRegression(positive=True, fit_intercept=True)
+    nnls_meta.fit(oof_logits, y)
+
+    raw_weights = nnls_meta.coef_
+    sum_w = np.sum(raw_weights)
+    norm_weights = raw_weights / sum_w if sum_w > 0 else np.ones(N_MODELS) / N_MODELS
+
+    # Calculate this seed's OOF score
+    seed_oof_logits = np.dot(oof_logits, norm_weights)
+    seed_oof_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-seed_oof_logits)))
+    all_seed_oof_scores.append(seed_oof_auc)
+    print(f"  🏆 Seed {cv_seed} Stacked OOF AUC = {seed_oof_auc:.5f}")
+
+    # Generate test logits for this seed
+    avg_test_probs = test_fold_predictions.mean(axis=2)
+    test_logits = np.zeros_like(avg_test_probs)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+        test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+    seed_test_logits = np.dot(test_logits, norm_weights)
+    all_superlearner_test_logits.append(seed_test_logits)
 
 
 # ============================================================
-# 6. NON-NEGATIVE SUPER LEARNER (NNLS META-OPTIMIZATION)
+# 6. ENSEMBLE OF REPEATED SUPER-LEARNERS
 # ============================================================
 
 print("\n============================================")
-print("FITTING NON-NEGATIVE CONSTRAINED META-LEARNER")
+print("INTEGRATING REPEATED SUPER-LEARNER TEST PREDICTIONS")
 print("============================================")
 
-# Convert 10-Fold OOF probabilities to Logit Space
-oof_logits = np.zeros_like(oof_probabilities)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+mean_repeated_test_logits = np.mean(all_superlearner_test_logits, axis=0)
+final_probabilities = 1.0 / (1.0 + np.exp(-mean_repeated_test_logits))
 
-# Fit Non-Negative Linear Meta-Learner (positive=True strictly guarantees w >= 0)
-nnls_meta = LinearRegression(positive=True, fit_intercept=True)
-nnls_meta.fit(oof_logits, y)
-
-# Normalize learned weights to sum to 1.0 for calibrated probability scaling
-raw_weights = nnls_meta.coef_
-sum_weights = np.sum(raw_weights)
-normalized_weights = raw_weights / sum_weights if sum_weights > 0 else np.ones(N_MODELS) / N_MODELS
-
-print("Learned 10-Fold Non-Negative Meta-Weights:")
-weight_summary = pd.DataFrame({
-    "Base Model": model_names,
-    "Raw Weight": raw_weights,
-    "Normalized %": normalized_weights * 100
-}).sort_values(by="Normalized %", ascending=False).reset_index(drop=True)
-
-print(weight_summary.to_string(index=False))
-
-# Calculate Meta-Learner 10-Fold Stacked OOF Score
-stacked_oof_logits = np.dot(oof_logits, normalized_weights)
-stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
-stacked_oof_auc = roc_auc_score(y, stacked_oof_probs)
-
-print(f"\n🏆 10-Fold Non-Negative Super Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
+mean_oof_score = np.mean(all_seed_oof_scores)
+print(f"Mean 5-Seed Repeated Stacked OOF AUC: {mean_oof_score:.5f}")
 
 
 # ============================================================
-# 7. INFERENCE ON TEST SET (10-FOLD AVERAGED LOGITS)
-# ============================================================
-
-print("\nGenerating final test predictions via 10-Fold Non-Negative Super Learner...")
-
-# Average 10-fold test probabilities per model, then convert to logit space
-avg_test_probs = test_fold_predictions.mean(axis=2)
-test_logits = np.zeros_like(avg_test_probs)
-
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-final_test_logits = np.dot(test_logits, normalized_weights)
-final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
-
-
-# ============================================================
-# 8. VALIDATE & SAVE SUBMISSION FILE
+# 7. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -391,7 +357,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp69_deep_elastic_nnls_superlearner.csv"
+output_file = "submission_exp70_repeated_5fold_nnls_superlearner.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -402,11 +368,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 9. SUMMARY & BENCHMARKS
+# 8. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 69 COMPLETE")
+print("EXPERIMENT 70 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -421,8 +387,8 @@ print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
 print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Previous Best)")
-print(f"Exp 69 10-Fold Deep-Elastic NNLS   : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print("Exp 68 Single 5-Fold NNLS           : 0.66054 (Previous Best)")
+print(f"Exp 70 Repeated 5-Fold NNLS (x5)    : Mean OOF = {mean_oof_score:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
