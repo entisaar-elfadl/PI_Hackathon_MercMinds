@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 78 — DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)
-# (DISCRETE STATE MEMOIZATION + FULLY CONVERGED SEM MANIFOLD)
+# EXPERIMENT 79 — HYBRID DP-NNLS META-STACKER ON PURE SEM MANIFOLD
+# (CONTINUOUS NNLS + DISCRETE CARUANA DP COMBINATORIAL OPTIMIZER)
 # ============================================================
 
 import pandas as pd
@@ -13,15 +13,15 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 78")
-print("DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)")
+print("EXPERIMENT 79")
+print("HYBRID DP-NNLS META-STACKER ON PURE SEM MANIFOLD")
 print("============================================")
 
 
@@ -112,7 +112,9 @@ def extract_pure_sem_features(train_df, test_df):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    # Latent SEM Blocks
+    # ------------------------------------------------------------
+    # SEM LATENT FACTOR BLOCKS
+    # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
@@ -185,7 +187,7 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 # ============================================================
 
 def get_candidate_library(seed=42):
-    """Returns 12 fully-converged models with max_iter=2500 to prevent iteration limit wastage."""
+    """Returns 12 fully-converged models (max_iter=2500, tol=1e-4) to prevent iteration limit wastage."""
     return {
         # 1. High-Precision L2 Models (L-BFGS)
         "LogReg_L2_C006": (
@@ -200,11 +202,7 @@ def get_candidate_library(seed=42):
             LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
             False
         ),
-        "LogReg_L2_C015": (
-            LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
-            False
-        ),
-        # 2. Fully-Converged ElasticNet Models (SAGA with max_iter=2500)
+        # 2. Fully-Converged ElasticNet Models (SAGA)
         "LogReg_ElasticNet_C008": (
             LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=seed),
             False
@@ -213,7 +211,7 @@ def get_candidate_library(seed=42):
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
             False
         ),
-        # 3. Quantile-Gaussian Transformed Models
+        # 3. Quantile-Gaussian Models
         "Quantile_LogReg_L2_C008": (
             LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
             True
@@ -222,7 +220,7 @@ def get_candidate_library(seed=42):
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
             True
         ),
-        # 4. Multi-Scale Neural MLPs
+        # 4. Multi-Scale Neural Networks
         "MLP_Medium_64_32": (
             MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
                           batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
@@ -288,7 +286,7 @@ print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)
 # ============================================================
 
 print("\n============================================")
-print("GENERATING 5-FOLD OOF PREDICTIONS ACROSS 12 CANDIDATE MODELS")
+print("GENERATING 5-FOLD OOF PREDICTIONS ACROSS 11 CANDIDATE MODELS")
 print("============================================")
 
 N_SPLITS = 5
@@ -328,71 +326,75 @@ for m_idx, m_name in enumerate(model_names):
 
 
 # ============================================================
-# 6. DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)
+# 6. DUAL META-OPTIMIZATION: CONTINUOUS NNLS + CARUANA DP
 # ============================================================
 
 print("\n============================================")
-print("RUNNING CARUANA DYNAMIC PROGRAMMING OPTIMIZATION (150 STEPS)")
+print("RUNNING DUAL META-OPTIMIZATION (NNLS + CARUANA DP)")
 print("============================================")
 
-def caruana_dynamic_programming_selection(val_preds_matrix, y_true, n_iterations=150):
-    """
-    Dynamic Programming Ensemble Selection via State Memoization:
-    At each step t, evaluates adding each candidate to the cumulative sum vector
-    in O(M) operations, directly maximizing validation ROC-AUC.
-    """
+# Convert OOF probabilities to Logit Space
+oof_logits = np.zeros_like(oof_probabilities)
+for m_idx in range(N_MODELS):
+    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
+    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+# --- PATH 1: Continuous Non-Negative Least Squares (NNLS) ---
+nnls_meta = LinearRegression(positive=True, fit_intercept=True)
+nnls_meta.fit(oof_logits, y)
+
+raw_nnls_w = nnls_meta.coef_
+sum_nnls_w = np.sum(raw_nnls_w)
+norm_nnls_w = raw_nnls_w / sum_nnls_w if sum_nnls_w > 0 else np.ones(N_MODELS) / N_MODELS
+
+oof_nnls_logits = np.dot(oof_logits, norm_nnls_w)
+oof_nnls_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-oof_nnls_logits)))
+print(f"1. Continuous NNLS Meta-Learner OOF AUC : {oof_nnls_auc:.5f}")
+
+# --- PATH 2: Discrete Dynamic Programming (Caruana DP) ---
+def caruana_dp_selection(val_preds_matrix, y_true, n_iterations=150):
     n_samples, n_candidates = val_preds_matrix.shape
     selected_indices = []
-    current_cumulative_sum = np.zeros(n_samples)
-    best_step_scores = []
+    current_sum = np.zeros(n_samples)
+    best_scores = []
 
     for t in range(1, n_iterations + 1):
         best_auc = -1.0
-        best_candidate_idx = 0
-
-        # Evaluate adding each candidate to the memoized state
+        best_idx = 0
         for cand_idx in range(n_candidates):
-            trial_pred = (current_cumulative_sum + val_preds_matrix[:, cand_idx]) / t
+            trial_pred = (current_sum + val_preds_matrix[:, cand_idx]) / t
             score = roc_auc_score(y_true, trial_pred)
             if score > best_auc:
                 best_auc = score
-                best_candidate_idx = cand_idx
+                best_idx = cand_idx
+        selected_indices.append(best_idx)
+        current_sum += val_preds_matrix[:, best_idx]
+        best_scores.append(best_auc)
 
-        # Update memoized DP state
-        selected_indices.append(best_candidate_idx)
-        current_cumulative_sum += val_preds_matrix[:, best_candidate_idx]
-        best_step_scores.append(best_auc)
-
-    # Compute optimal discrete weights from selection frequency
     counts = np.bincount(selected_indices, minlength=n_candidates)
     optimal_weights = counts / n_iterations
-    return optimal_weights, selected_indices, best_step_scores[-1]
+    return optimal_weights, best_scores[-1]
+
+dp_weights, dp_best_auc = caruana_dp_selection(oof_probabilities, y.to_numpy(), n_iterations=150)
+oof_dp_logits = np.dot(oof_logits, dp_weights)
+print(f"2. Discrete Dynamic Programming OOF AUC : {dp_best_auc:.5f}")
 
 
-# Run DP selection on OOF probabilities
-dp_weights, selection_path, dp_best_auc = caruana_dynamic_programming_selection(
-    oof_probabilities, y.to_numpy(), n_iterations=150
-)
+# ------------------------------------------------------------
+# PATH 3: HYBRID FUSION (CONVEX DUAL-OPTIMIZATION)
+# ------------------------------------------------------------
+# 50% Continuous Log-Loss NNLS + 50% Discrete Rank-Order DP
+oof_hybrid_logits = 0.50 * oof_nnls_logits + 0.50 * oof_dp_logits
+hybrid_oof_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-oof_hybrid_logits)))
 
-# Display DP optimal allocation
-dp_summary = []
-for m_idx, m_name in enumerate(model_names):
-    w = dp_weights[m_idx]
-    if w > 0:
-        dp_summary.append({"Model Architecture": m_name, "DP Selected Weight": f"{w * 100:.2f}%"})
-
-dp_df = pd.DataFrame(dp_summary).sort_values(by="DP Selected Weight", ascending=False).reset_index(drop=True)
-
-print("Learned Dynamic Programming Weights:")
-print(dp_df.to_string(index=False))
-print(f"\n🏆 Dynamic Programming Optimized OOF ROC-AUC: {dp_best_auc:.5f}")
+print(f"\n🏆 Combined Hybrid DP-NNLS Meta-Stacker OOF AUC: {hybrid_oof_auc:.5f}")
 
 
 # ============================================================
-# 7. INFERENCE ON TEST SET (DP WEIGHTED LOGITS)
+# 7. INFERENCE ON TEST SET (HYBRID DP-NNLS LOGITS)
 # ============================================================
 
-print("\nGenerating final test predictions via Dynamic Programming weights...")
+print("\nGenerating final test predictions via Hybrid DP-NNLS Meta-Stacker...")
 
 # Average 5-fold test probabilities per model, then convert to logit space
 avg_test_probs = test_fold_predictions.mean(axis=2)
@@ -402,8 +404,12 @@ for m_idx in range(N_MODELS):
     p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
     test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-# Combine logits using DP weights
-final_test_logits = np.dot(test_logits, dp_weights)
+# Compute both paths on test logits
+test_nnls_logits = np.dot(test_logits, norm_nnls_w)
+test_dp_logits = np.dot(test_logits, dp_weights)
+
+# 50/50 Optimal Hybrid Blend
+final_test_logits = 0.50 * test_nnls_logits + 0.50 * test_dp_logits
 final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
 
 
@@ -418,7 +424,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp78_dynamic_programming_sem_ensemble.csv"
+output_file = "submission_exp79_hybrid_dp_nnls_sem_stacker.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -433,7 +439,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 78 COMPLETE")
+print("EXPERIMENT 79 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -447,10 +453,11 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 70 Repeated 5-Fold NNLS         : 0.65998")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
-print(f"Exp 78 Dynamic Programming (Caruana): OOF Val = {dp_best_auc:.5f} (Ready for submission)")
+print(f"NNLS Meta-Learner Path OOF AUC       : {oof_nnls_auc:.5f}")
+print(f"Caruana DP Selection Path OOF AUC    : {dp_best_auc:.5f}")
+print(f"Exp 79 Combined DP-NNLS OOF AUC      : {hybrid_oof_auc:.5f}")
+print("Exp 68 Baseline Benchmark            : 0.66054")
+print("Exp 79 Hybrid DP-NNLS Submission     : READY")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
