@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 77 — DUAL-REGIME LABOUR TRANSITION SUPER-LEARNER
-# (FIXED: MATCHED ARRAY MASKS + RETENTION VS JOB-FINDING NNLS)
+# EXPERIMENT 78 — DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)
+# (DISCRETE STATE MEMOIZATION + FULLY CONVERGED SEM MANIFOLD)
 # ============================================================
 
 import pandas as pd
@@ -13,15 +13,15 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 77")
-print("DUAL-REGIME LABOUR TRANSITION SUPER-LEARNER")
+print("EXPERIMENT 78")
+print("DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)")
 print("============================================")
 
 
@@ -37,7 +37,7 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. FEATURE EXTRACTION & PURE SEM MANIFOLD
+# 2. PROVEN PURE SEM FEATURE PIPELINE
 # ============================================================
 
 target = "employed_status"
@@ -112,9 +112,7 @@ def extract_pure_sem_features(train_df, test_df):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    # ------------------------------------------------------------
-    # SEM LATENT FACTOR BLOCKS
-    # ------------------------------------------------------------
+    # Latent SEM Blocks
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
@@ -183,31 +181,81 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. BASE MODELS SUITE
+# 3. HIGH-CONVERGENCE 12-MODEL CANDIDATE LIBRARY
 # ============================================================
 
-def get_base_models(seed=42):
-    """Returns the candidate models for NNLS stacking."""
+def get_candidate_library(seed=42):
+    """Returns 12 fully-converged models with max_iter=2500 to prevent iteration limit wastage."""
     return {
-        "LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_L2_C010": (LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), False),
-        "Quantile_LogReg_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), True),
-        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                           n_iter_no_change=20, validation_fraction=0.15, random_state=seed), False),
-        "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                                         batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                         n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100), False)
+        # 1. High-Precision L2 Models (L-BFGS)
+        "LogReg_L2_C006": (
+            LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        "LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        "LogReg_L2_C010": (
+            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        "LogReg_L2_C015": (
+            LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        # 2. Fully-Converged ElasticNet Models (SAGA with max_iter=2500)
+        "LogReg_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        "LogReg_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        # 3. Quantile-Gaussian Transformed Models
+        "Quantile_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2500, tol=1e-4, random_state=seed),
+            True
+        ),
+        "Quantile_LogReg_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
+            True
+        ),
+        # 4. Multi-Scale Neural MLPs
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed),
+            False
+        ),
+        "MLP_Deep_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 50),
+            False
+        ),
+        "MLP_Wide_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 100),
+            False
+        ),
+        "MLP_Tanh_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 150),
+            False
+        )
     }
 
 
 # ============================================================
-# 4. LOAD & PREPARE COMPLETE DATASET
+# 4. LOAD & PREPARE DATASET
 # ============================================================
 
 print("\n============================================")
-print("EXTRACTING SEM MANIFOLD & PARTITIONING REGIMES")
+print("EXTRACTING PURE EXP 59 SEM LATENT FACTORS")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
@@ -218,140 +266,144 @@ train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
 
 common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
 
-y_full = train_sem[target].reset_index(drop=True)
-X_full = train_sem[common_cols].reset_index(drop=True)
-X_test_full = test_sem[common_cols].reset_index(drop=True)
+y = train_sem[target].reset_index(drop=True)
+X = train_sem[common_cols].reset_index(drop=True)
+X_test = test_sem[common_cols].reset_index(drop=True)
 
 # Drop high-cardinality categorical (>100)
-categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
-high_cardinality = [c for c in categorical_features if X_full[c].nunique(dropna=True) > 100]
+categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
+high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
 if high_cardinality:
-    X_full = X_full.drop(columns=high_cardinality)
-    X_test_full = X_test_full.drop(columns=high_cardinality)
+    X = X.drop(columns=high_cardinality)
+    X_test = X_test.drop(columns=high_cardinality)
 
-categorical_features = X_full.select_dtypes(include=["object", "category"]).columns.tolist()
-numerical_features = X_full.select_dtypes(include=[np.number]).columns.tolist()
+categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
+numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-# Define Regimes directly from X_full / X_test_full (Guarantees exact length match!)
-train_mask_retention = (X_full["employed_lag_num"] == 1.0).to_numpy()
-train_mask_jobfinding = ~train_mask_retention
-
-test_mask_retention = (X_test_full["employed_lag_num"] == 1.0).to_numpy()
-test_mask_jobfinding = ~test_mask_retention
-
-print(f"Total Observations: {len(X_full)} | Test Observations: {len(X_test_full)}")
-print(f" -> Regime 1 (Job Retention - Employed Lag == 1): {np.sum(train_mask_retention)} Train | {np.sum(test_mask_retention)} Test")
-print(f" -> Regime 2 (Job Finding  - Unemployed/First):  {np.sum(train_mask_jobfinding)} Train | {np.sum(test_mask_jobfinding)} Test")
+print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
 
 # ============================================================
-# 5. MODULAR 5-FOLD NNLS SUPER-LEARNER TRAINER
-# ============================================================
-
-def train_nnls_super_learner(X_subset, y_subset, X_target_test, regime_name):
-    """Trains a leak-free 5-fold NNLS Super-Learner on a specific regime subset."""
-    print(f"\n--- Training 5-Fold NNLS for {regime_name} ({len(X_subset)} rows) ---")
-    
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    models_sample = get_base_models(seed=42)
-    model_names = list(models_sample.keys())
-    n_mods = len(model_names)
-
-    oof_probs = np.zeros((len(X_subset), n_mods))
-    test_preds_folds = np.zeros((len(X_target_test), n_mods, 5))
-
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X_subset, y_subset)):
-        X_tr_f, y_tr_f = X_subset.iloc[train_idx], y_subset.iloc[train_idx]
-        X_va_f, y_va_f = X_subset.iloc[val_idx], y_subset.iloc[val_idx]
-
-        models_pool = get_base_models(seed=42 + fold * 10)
-
-        for m_idx, (m_name, (m_obj, use_q)) in enumerate(models_pool.items()):
-            preproc = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
-            pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
-            pipe.fit(X_tr_f, y_tr_f)
-
-            oof_probs[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-            test_preds_folds[:, m_idx, fold] = pipe.predict_proba(X_target_test)[:, 1]
-
-    # Convert OOF to logit space
-    oof_logits = np.zeros_like(oof_probs)
-    for m_idx in range(n_mods):
-        p_cl = np.clip(oof_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-        oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-    # NNLS Non-Negative Meta-Optimization
-    nnls = LinearRegression(positive=True, fit_intercept=True)
-    nnls.fit(oof_logits, y_subset)
-
-    w_raw = nnls.coef_
-    w_norm = w_raw / np.sum(w_raw) if np.sum(w_raw) > 0 else np.ones(n_mods) / n_mods
-
-    # OOF AUC on this regime
-    oof_reg_logits = np.dot(oof_logits, w_norm)
-    oof_auc = roc_auc_score(y_subset, 1.0 / (1.0 + np.exp(-oof_reg_logits)))
-    print(f" 🏆 {regime_name} OOF ROC-AUC: {oof_auc:.5f}")
-
-    # Compute test logits
-    avg_test_probs = test_preds_folds.mean(axis=2)
-    test_logits = np.zeros_like(avg_test_probs)
-    for m_idx in range(n_mods):
-        p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-        test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-    final_test_logits = np.dot(test_logits, w_norm)
-    return oof_auc, final_test_logits
-
-
-# ============================================================
-# 6. TRAIN REGIME 1, REGIME 2 & GLOBAL ANCHOR
-# ============================================================
-
-# 1. Regime 1: Retention Specialist
-auc_ret, test_logits_ret = train_nnls_super_learner(
-    X_full[train_mask_retention].reset_index(drop=True),
-    y_full[train_mask_retention].reset_index(drop=True),
-    X_test_full,
-    "Regime 1 (Job Retention Specialist)"
-)
-
-# 2. Regime 2: Job-Finding Specialist
-auc_find, test_logits_find = train_nnls_super_learner(
-    X_full[train_mask_jobfinding].reset_index(drop=True),
-    y_full[train_mask_jobfinding].reset_index(drop=True),
-    X_test_full,
-    "Regime 2 (Job-Finding Specialist)"
-)
-
-# 3. Global Anchor: Proven 0.66054 Engine
-auc_glob, test_logits_glob = train_nnls_super_learner(
-    X_full,
-    y_full,
-    X_test_full,
-    "Regime 3 (Global Anchor Engine)"
-)
-
-
-# ============================================================
-# 7. CONDITIONAL DUAL-REGIME ROUTING & LOG-ODDS INTEGRATION
+# 5. 5-FOLD LEAK-FREE OOF PREDICTION GENERATION
 # ============================================================
 
 print("\n============================================")
-print("APPLYING CONDITIONAL DUAL-REGIME TEST ROUTING")
+print("GENERATING 5-FOLD OOF PREDICTIONS ACROSS 12 CANDIDATE MODELS")
 print("============================================")
 
-final_test_logits = np.zeros(len(X_test_full))
+N_SPLITS = 5
+skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-# Route test cases with employed_lag == 1 through Retention Specialist (70% Specialist + 30% Global)
-final_test_logits[test_mask_retention] = (
-    0.70 * test_logits_ret[test_mask_retention] + 0.30 * test_logits_glob[test_mask_retention]
+model_names = list(get_candidate_library(seed=42).keys())
+N_MODELS = len(model_names)
+
+oof_probabilities = np.zeros((len(X), N_MODELS))
+test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+    X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
+
+    models_dict = get_candidate_library(seed=42 + fold * 10)
+
+    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
+        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+        pipe = Pipeline([
+            ("preprocessor", preprocessor),
+            ("model", model_obj)
+        ])
+        pipe.fit(X_tr_f, y_tr_f)
+        
+        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+
+    print(f"Fold {fold + 1}/{N_SPLITS} Complete.")
+
+
+# Individual OOF Scores
+print("\n--- Individual Candidate Model OOF ROC-AUC Scores ---")
+for m_idx, m_name in enumerate(model_names):
+    auc = roc_auc_score(y, oof_probabilities[:, m_idx])
+    print(f"Model {m_idx + 1:02d} ({m_name:<34}): OOF AUC = {auc:.5f}")
+
+
+# ============================================================
+# 6. DYNAMIC PROGRAMMING ENSEMBLE SELECTION (CARUANA DP)
+# ============================================================
+
+print("\n============================================")
+print("RUNNING CARUANA DYNAMIC PROGRAMMING OPTIMIZATION (150 STEPS)")
+print("============================================")
+
+def caruana_dynamic_programming_selection(val_preds_matrix, y_true, n_iterations=150):
+    """
+    Dynamic Programming Ensemble Selection via State Memoization:
+    At each step t, evaluates adding each candidate to the cumulative sum vector
+    in O(M) operations, directly maximizing validation ROC-AUC.
+    """
+    n_samples, n_candidates = val_preds_matrix.shape
+    selected_indices = []
+    current_cumulative_sum = np.zeros(n_samples)
+    best_step_scores = []
+
+    for t in range(1, n_iterations + 1):
+        best_auc = -1.0
+        best_candidate_idx = 0
+
+        # Evaluate adding each candidate to the memoized state
+        for cand_idx in range(n_candidates):
+            trial_pred = (current_cumulative_sum + val_preds_matrix[:, cand_idx]) / t
+            score = roc_auc_score(y_true, trial_pred)
+            if score > best_auc:
+                best_auc = score
+                best_candidate_idx = cand_idx
+
+        # Update memoized DP state
+        selected_indices.append(best_candidate_idx)
+        current_cumulative_sum += val_preds_matrix[:, best_candidate_idx]
+        best_step_scores.append(best_auc)
+
+    # Compute optimal discrete weights from selection frequency
+    counts = np.bincount(selected_indices, minlength=n_candidates)
+    optimal_weights = counts / n_iterations
+    return optimal_weights, selected_indices, best_step_scores[-1]
+
+
+# Run DP selection on OOF probabilities
+dp_weights, selection_path, dp_best_auc = caruana_dynamic_programming_selection(
+    oof_probabilities, y.to_numpy(), n_iterations=150
 )
 
-# Route test cases with employed_lag != 1 through Job-Finding Specialist (70% Specialist + 30% Global)
-final_test_logits[test_mask_jobfinding] = (
-    0.70 * test_logits_find[test_mask_jobfinding] + 0.30 * test_logits_glob[test_mask_jobfinding]
-)
+# Display DP optimal allocation
+dp_summary = []
+for m_idx, m_name in enumerate(model_names):
+    w = dp_weights[m_idx]
+    if w > 0:
+        dp_summary.append({"Model Architecture": m_name, "DP Selected Weight": f"{w * 100:.2f}%"})
 
+dp_df = pd.DataFrame(dp_summary).sort_values(by="DP Selected Weight", ascending=False).reset_index(drop=True)
+
+print("Learned Dynamic Programming Weights:")
+print(dp_df.to_string(index=False))
+print(f"\n🏆 Dynamic Programming Optimized OOF ROC-AUC: {dp_best_auc:.5f}")
+
+
+# ============================================================
+# 7. INFERENCE ON TEST SET (DP WEIGHTED LOGITS)
+# ============================================================
+
+print("\nGenerating final test predictions via Dynamic Programming weights...")
+
+# Average 5-fold test probabilities per model, then convert to logit space
+avg_test_probs = test_fold_predictions.mean(axis=2)
+test_logits = np.zeros_like(avg_test_probs)
+
+for m_idx in range(N_MODELS):
+    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+# Combine logits using DP weights
+final_test_logits = np.dot(test_logits, dp_weights)
 final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
 
 
@@ -366,7 +418,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp77_dual_regime_transition_superlearner.csv"
+output_file = "submission_exp78_dynamic_programming_sem_ensemble.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -381,7 +433,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 77 COMPLETE")
+print("EXPERIMENT 78 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -395,11 +447,10 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print(f"Regime 1 (Retention Model) OOF AUC : {auc_ret:.5f}")
-print(f"Regime 2 (Job-Finding Model) OOF AUC: {auc_find:.5f}")
-print(f"Global Anchor Engine OOF AUC       : {auc_glob:.5f}")
-print("Exp 68 Benchmark                   : 0.66054")
-print("Exp 77 Dual-Regime Submission      : READY")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832")
+print("Exp 70 Repeated 5-Fold NNLS         : 0.65998")
+print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
+print(f"Exp 78 Dynamic Programming (Caruana): OOF Val = {dp_best_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
