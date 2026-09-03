@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 73 — FULL-PANEL TRAJECTORY & NATIVE CATEGORICAL GBDT
-# (FIXED: ORDINAL ENCODER max_categories=250 + FULL-PANEL RECONSTRUCTION)
+# EXPERIMENT 74 — PURE-NNLS PANEL SUPER-LEARNER
+# (PANEL TRAJECTORY + FREQUENCY ENCODED MUNICIPALITIES + PURE SEM + NNLS)
 # ============================================================
 
 import pandas as pd
@@ -10,10 +10,9 @@ from pathlib import Path
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder, QuantileTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
@@ -21,8 +20,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 73")
-print("FULL-PANEL TRAJECTORY & NATIVE CATEGORICAL GBDT")
+print("EXPERIMENT 74")
+print("PURE-NNLS PANEL SUPER-LEARNER (ZERO TREE DRAG)")
 print("============================================")
 
 
@@ -38,14 +37,14 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. PARTICIPANT LIFETIME TRAJECTORY & DOMAIN FEATURE ENGINEERING
+# 2. FULL PANEL RECONSTRUCTION & FREQUENCY ENCODING
 # ============================================================
 
 target = "employed_status"
 GLOBAL_PRIOR = 0.31694
 
 def parse_matric_band(val):
-    """Parses matric percentage strings into continuous numeric marks."""
+    """Converts matric percentage strings into continuous numeric marks."""
     if pd.isna(val):
         return np.nan
     s = str(val).replace("%", "").strip()
@@ -72,10 +71,10 @@ def parse_matric_band(val):
             return np.nan
 
 
-def build_full_panel_datasets(train_raw, test_raw):
+def build_panel_and_sem_features(train_raw, test_raw):
     """
-    Constructs participant lifetime trajectories across survey rounds (1-8 -> 9)
-    with zero future leakage in train, and exact lifetime history mapped to test.
+    Constructs participant lifetime trajectories, frequency-encodes high-cardinality
+    locations/qualifications, and attaches pure SEM latent factor blocks.
     """
     tr = train_raw.copy()
     te = test_raw.copy()
@@ -93,10 +92,9 @@ def build_full_panel_datasets(train_raw, test_raw):
     else:
         tr["_round_order"] = 1
 
-    # Sort strictly chronologically
     tr = tr.sort_values(["anonymised_id", "_round_order"]).reset_index(drop=True)
 
-    # In Train: Expanding past history (only rounds strictly PRIOR to current row)
+    # Expanding historical trajectory in train (strictly past rounds)
     tr["user_past_employed_sum"] = (
         tr.groupby("anonymised_id")[target]
         .transform(lambda s: s.shift(1).cumsum())
@@ -120,7 +118,7 @@ def build_full_panel_datasets(train_raw, test_raw):
     tr["user_has_past_history"] = (tr["user_past_obs_count"] > 0).astype(float)
     tr = tr.drop(columns=["_round_order", "user_past_employed_sum"])
 
-    # In Test (Round 9): Full lifetime history from all training rounds (1-8)
+    # Map full lifetime history to test (Round 9)
     user_total_sum = tr.groupby("anonymised_id")[target].sum()
     user_total_count = tr.groupby("anonymised_id")[target].count()
     user_lifetime_rate = user_total_sum / user_total_count
@@ -132,14 +130,13 @@ def build_full_panel_datasets(train_raw, test_raw):
     te["user_has_past_history"] = (te["user_past_obs_count"] > 0).astype(float)
 
     # ------------------------------------------------------------
-    # 2. CALENDAR & LAG TRANSFORMATIONS
+    # 2. DATES, LAGS & MATRIC PARSERS
     # ------------------------------------------------------------
     for df in [tr, te]:
         if "survey_date" in df.columns:
             df["survey_date"] = pd.to_datetime(df["survey_date"], errors="coerce")
             df["survey_year"] = df["survey_date"].dt.year
             df["survey_month"] = df["survey_date"].dt.month
-            df["survey_quarter"] = df["survey_date"].dt.quarter
             df["survey_dayofyear"] = df["survey_date"].dt.dayofyear
             df.drop(columns=["survey_date"], inplace=True)
 
@@ -168,20 +165,28 @@ def build_full_panel_datasets(train_raw, test_raw):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    return tr, te
+    # ------------------------------------------------------------
+    # 3. FREQUENCY ENCODING OF HIGH-CARDINALITY CATEGORIES (NO LEAKAGE)
+    # ------------------------------------------------------------
+    common_cols = [c for c in tr.columns if c in te.columns and c not in [target, "anonymised_id"]]
+    cat_cols = tr[common_cols].select_dtypes(include=["object", "category"]).columns.tolist()
 
+    for col in cat_cols:
+        if tr[col].nunique(dropna=True) > 25:
+            freq_map = tr[col].value_counts(normalize=True).to_dict()
+            tr[f"{col}_freq"] = tr[col].map(freq_map).fillna(0.0).astype(float)
+            te[f"{col}_freq"] = te[col].map(freq_map).fillna(0.0).astype(float)
+            tr.drop(columns=[col], inplace=True)
+            te.drop(columns=[col], inplace=True)
 
-# ============================================================
-# 3. SEM FACTOR EXTRACTION FOR LINEAR ENGINE
-# ============================================================
-
-def attach_sem_latent_factors(tr, te):
-    """Computes Factor Analysis & PLS factors on numeric columns."""
-    tr_sem = tr.copy()
-    te_sem = te.copy()
-
-    acad_cols = [c for c in tr_sem.columns if "_score" in c]
-    labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time", "user_has_past_history"]
+    # ------------------------------------------------------------
+    # 4. SEM LATENT FACTOR EXTRACTION
+    # ------------------------------------------------------------
+    acad_cols = [c for c in tr.columns if "_score" in c]
+    labour_cols = [
+        "employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time",
+        "user_lifetime_emp_rate", "user_last_known_status", "user_has_past_history"
+    ]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
 
     imp = SimpleImputer(strategy="median")
@@ -189,32 +194,110 @@ def attach_sem_latent_factors(tr, te):
 
     if len(acad_cols) > 0:
         fa_acad = FactorAnalysis(n_components=2, random_state=42)
-        X_ac_tr = scl.fit_transform(imp.fit_transform(tr_sem[acad_cols]))
-        X_ac_te = scl.transform(imp.transform(te_sem[acad_cols]))
-        tr_sem["latent_acad_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
-        tr_sem["latent_acad_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
-        te_sem["latent_acad_1"] = fa_acad.transform(X_ac_te)[:, 0]
-        te_sem["latent_acad_2"] = fa_acad.transform(X_ac_te)[:, 1]
+        X_ac_tr = scl.fit_transform(imp.fit_transform(tr[acad_cols]))
+        X_ac_te = scl.transform(imp.transform(te[acad_cols]))
+        tr["latent_acad_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
+        tr["latent_acad_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
+        te["latent_acad_1"] = fa_acad.transform(X_ac_te)[:, 0]
+        te["latent_acad_2"] = fa_acad.transform(X_ac_te)[:, 1]
 
     fa_lab = FactorAnalysis(n_components=2, random_state=42)
-    X_lb_tr = scl.fit_transform(imp.fit_transform(tr_sem[labour_cols]))
-    X_lb_te = scl.transform(imp.transform(te_sem[labour_cols]))
-    tr_sem["latent_labour_1"] = fa_lab.fit_transform(X_lb_tr)[:, 0]
-    tr_sem["latent_labour_2"] = fa_lab.fit_transform(X_lb_tr)[:, 1]
-    te_sem["latent_labour_1"] = fa_lab.transform(X_lb_te)[:, 0]
-    te_sem["latent_labour_2"] = fa_lab.transform(X_lb_te)[:, 1]
+    X_lb_tr = scl.fit_transform(imp.fit_transform(tr[labour_cols]))
+    X_lb_te = scl.transform(imp.transform(te[labour_cols]))
+    tr["latent_labour_1"] = fa_lab.fit_transform(X_lb_tr)[:, 0]
+    tr["latent_labour_2"] = fa_lab.fit_transform(X_lb_tr)[:, 1]
+    te["latent_labour_1"] = fa_lab.transform(X_lb_te)[:, 0]
+    te["latent_labour_2"] = fa_lab.transform(X_lb_te)[:, 1]
+
+    fa_soc = FactorAnalysis(n_components=2, random_state=42)
+    X_sc_tr = scl.fit_transform(imp.fit_transform(tr[socio_cols]))
+    X_sc_te = scl.transform(imp.transform(te[socio_cols]))
+    tr["latent_socio_1"] = fa_soc.fit_transform(X_sc_tr)[:, 0]
+    tr["latent_socio_2"] = fa_soc.fit_transform(X_sc_tr)[:, 1]
+    te["latent_socio_1"] = fa_soc.transform(X_sc_te)[:, 0]
+    te["latent_socio_2"] = fa_soc.transform(X_sc_te)[:, 1]
 
     all_num = acad_cols + labour_cols + socio_cols
     pls = PLSRegression(n_components=2)
-    X_pls_tr = imp.fit_transform(tr_sem[all_num])
-    X_pls_te = imp.transform(te_sem[all_num])
-    pls.fit(X_pls_tr, tr_sem[target])
-    tr_sem["pls_latent_1"] = pls.transform(X_pls_tr)[:, 0]
-    tr_sem["pls_latent_2"] = pls.transform(X_pls_tr)[:, 1]
-    te_sem["pls_latent_1"] = pls.transform(X_pls_te)[:, 0]
-    te_sem["pls_latent_2"] = pls.transform(X_pls_te)[:, 1]
+    X_pls_tr = imp.fit_transform(tr[all_num])
+    X_pls_te = imp.transform(te[all_num])
+    pls.fit(X_pls_tr, tr[target])
+    tr["pls_latent_1"] = pls.transform(X_pls_tr)[:, 0]
+    tr["pls_latent_2"] = pls.transform(X_pls_tr)[:, 1]
+    te["pls_latent_1"] = pls.transform(X_pls_te)[:, 0]
+    te["pls_latent_2"] = pls.transform(X_pls_te)[:, 1]
 
-    return tr_sem, te_sem
+    return tr, te
+
+
+def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
+    """Builds standard or quantile-normalized preprocessor."""
+    transformers = []
+
+    if len(numerical_cols) > 0:
+        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
+        numeric_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", scaler)
+        ])
+        transformers.append(("num", numeric_transformer, numerical_cols))
+
+    if len(categorical_cols) > 0:
+        categorical_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+        ])
+        transformers.append(("cat", categorical_transformer, categorical_cols))
+
+    return ColumnTransformer(transformers=transformers)
+
+
+# ============================================================
+# 3. HIGH-PERFORMING BASE MODEL DEFINITIONS
+# ============================================================
+
+def get_base_model_dict(seed=42):
+    """Returns the proven 8-model suite (ElasticNet + Multi-Scale MLPs)."""
+    return {
+        "Quantile_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Quantile_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Standard_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False
+        ),
+        "MLP_Deep_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 50),
+            False
+        ),
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
+            False
+        ),
+        "MLP_Tanh_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 150),
+            False
+        )
+    }
 
 
 # ============================================================
@@ -222,19 +305,18 @@ def attach_sem_latent_factors(tr, te):
 # ============================================================
 
 print("\n============================================")
-print("RECONSTRUCTING PARTICIPANT PANEL TRAJECTORIES")
+print("LOADING DATASET & BUILDING PANEL TRAJECTORIES")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
 
-tr_panel, te_panel = build_full_panel_datasets(train_raw, test_raw)
-tr_sem, te_sem = attach_sem_latent_factors(tr_panel, te_panel)
+tr_clean, te_clean = build_panel_and_sem_features(train_raw, test_raw)
 
-# Remove ID from modeling matrix
-tr_clean = tr_sem.drop(columns=["anonymised_id"])
-te_clean = te_sem.drop(columns=["anonymised_id"])
+# Drop ID
+tr_clean.drop(columns=["anonymised_id"], inplace=True)
+te_clean.drop(columns=["anonymised_id"], inplace=True)
 
 common_cols = [c for c in tr_clean.columns if c in te_clean.columns and c != target]
 
@@ -242,186 +324,105 @@ y = tr_clean[target].reset_index(drop=True)
 X = tr_clean[common_cols].reset_index(drop=True)
 X_test = te_clean[common_cols].reset_index(drop=True)
 
-# ------------------------------------------------------------
-# Separate Feature Sets for Trees vs Linear Models
-# ------------------------------------------------------------
-tree_cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-tree_num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
+numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-# Linear Models drop categoricals > 100 for OneHot stability
-linear_high_card = [c for c in tree_cat_cols if X[c].nunique(dropna=True) > 100]
-X_linear = X.drop(columns=linear_high_card)
-X_test_linear = X_test.drop(columns=linear_high_card)
-
-linear_cat_cols = X_linear.select_dtypes(include=["object", "category"]).columns.tolist()
-linear_num_cols = X_linear.select_dtypes(include=[np.number]).columns.tolist()
-
-print(f"Total Observations: {len(X)}")
-print(f"Tree Engine: {len(tree_num_cols)} numerical, {len(tree_cat_cols)} categorical (ALL municipalities & qualifications retained!)")
-print(f"Linear Engine: {len(linear_num_cols)} numerical, {len(linear_cat_cols)} categorical")
+print(f"Full dataset: {len(X)} observations")
+print(f"Features: {len(numerical_features)} numerical (incl. Panel Trajectory & SEM Factors), {len(categorical_features)} categorical")
 
 
 # ============================================================
-# 5. ENGINE 1: NATIVE CATEGORICAL GRADIENT BOOSTED TREES (5-FOLD)
+# 5. REPEATED 5-FOLD NNLS TRAINING (3 SEEDS = 15 FOLDS)
 # ============================================================
 
 print("\n============================================")
-print("TRAINING ENGINE 1: NATIVE CATEGORICAL GRADIENT BOOSTING")
+print("RUNNING REPEATED 5-FOLD NNLS OPTIMIZATION (3 SEEDS)")
 print("============================================")
 
-# max_categories=250 automatically groups long-tail rare categories into index 249,
-# strictly satisfying HistGradientBoosting's <= 255 cardinality requirement!
-tree_preprocessor = ColumnTransformer(
-    transformers=[
-        ("num", Pipeline([("imp", SimpleImputer(strategy="median"))]), tree_num_cols),
-        ("cat", Pipeline([
-            ("imp", SimpleImputer(strategy="most_frequent")),
-            ("ord", OrdinalEncoder(
-                max_categories=250,
-                handle_unknown="use_encoded_value",
-                unknown_value=np.nan
-            ))
-        ]), tree_cat_cols)
-    ]
-)
-
-# Fit-transform features for trees
-X_tree_proc = tree_preprocessor.fit_transform(X)
-X_test_tree_proc = tree_preprocessor.transform(X_test)
-
-# Compute exact boolean categorical mask matching the transformed columns
-n_num_proc = len(tree_num_cols)
-n_cat_proc = len(tree_cat_cols)
-cat_mask = np.array([False] * n_num_proc + [True] * n_cat_proc)
-
-tree_models_specs = [
-    ("HistGB_Standard", HistGradientBoostingClassifier(
-        loss="log_loss", learning_rate=0.03, max_iter=350, max_leaf_nodes=31,
-        min_samples_leaf=25, l2_regularization=2.0, categorical_features=cat_mask,
-        early_stopping=True, n_iter_no_change=20, validation_fraction=0.15, random_state=42
-    )),
-    ("HistGB_Deep", HistGradientBoostingClassifier(
-        loss="log_loss", learning_rate=0.025, max_iter=400, max_leaf_nodes=45,
-        min_samples_leaf=20, l2_regularization=3.0, categorical_features=cat_mask,
-        early_stopping=True, n_iter_no_change=20, validation_fraction=0.15, random_state=101
-    )),
-    ("HistGB_Compact", HistGradientBoostingClassifier(
-        loss="log_loss", learning_rate=0.035, max_iter=300, max_leaf_nodes=21,
-        min_samples_leaf=35, l2_regularization=1.0, categorical_features=cat_mask,
-        early_stopping=True, n_iter_no_change=20, validation_fraction=0.15, random_state=777
-    ))
-]
-
+REPEATED_SEEDS = [42, 101, 777]
 N_SPLITS = 5
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-tree_oof_preds = np.zeros(len(X))
-tree_test_fold_preds = np.zeros((len(X_test), N_SPLITS))
+model_names = list(get_base_model_dict(seed=42).keys())
+N_MODELS = len(model_names)
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X_tree_proc[train_idx], y.iloc[train_idx]
-    X_va_f, y_va_f = X_tree_proc[val_idx], y.iloc[val_idx]
+all_superlearner_test_logits = []
+all_seed_oof_scores = []
 
-    fold_val_acc = np.zeros(len(val_idx))
-    fold_test_acc = np.zeros(len(X_test))
+for s_idx, cv_seed in enumerate(REPEATED_SEEDS):
+    print(f"\n--- Running 5-Fold Partition Seed {cv_seed} ({s_idx + 1}/{len(REPEATED_SEEDS)}) ---")
 
-    for _, t_model in tree_models_specs:
-        t_model.fit(X_tr_f, y_tr_f)
-        fold_val_acc += t_model.predict_proba(X_va_f)[:, 1] / len(tree_models_specs)
-        fold_test_acc += t_model.predict_proba(X_test_tree_proc)[:, 1] / len(tree_models_specs)
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=cv_seed)
 
-    tree_oof_preds[val_idx] = fold_val_acc
-    tree_test_fold_preds[:, fold] = fold_test_acc
-    print(f"  -> Tree Fold {fold + 1} ROC-AUC: {roc_auc_score(y_va_f, fold_val_acc):.5f}")
+    oof_probabilities = np.zeros((len(X), N_MODELS))
+    test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
-tree_total_oof_auc = roc_auc_score(y, tree_oof_preds)
-print(f"🏆 Engine 1 (Native Categorical GBDT) OOF ROC-AUC: {tree_total_oof_auc:.5f}")
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+        X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+        X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
+        models_dict = get_base_model_dict(seed=cv_seed + fold * 10)
 
-# ============================================================
-# 6. ENGINE 2: 0.66054 NNLS SUPER-LEARNER (5-FOLD)
-# ============================================================
+        for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
+            preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+            pipe = Pipeline([
+                ("preprocessor", preprocessor),
+                ("model", model_obj)
+            ])
+            pipe.fit(X_tr_f, y_tr_f)
+            
+            oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+            test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-print("\n============================================")
-print("TRAINING ENGINE 2: PROVEN 0.66054 NNLS SUPER-LEARNER")
-print("============================================")
+        print(f"  -> Fold {fold + 1}/{N_SPLITS} Complete.")
 
-def build_linear_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    transformers = []
-    if len(numerical_cols) > 0:
-        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
-        transformers.append(("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("scl", scaler)]), numerical_cols))
-    if len(categorical_cols) > 0:
-        transformers.append(("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), categorical_cols))
-    return ColumnTransformer(transformers=transformers)
+    # Convert OOF to Logit Space
+    oof_logits = np.zeros_like(oof_probabilities)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
+        oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-linear_base_models = {
-    "Quantile_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=42), True),
-    "Standard_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=42), False),
-    "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015, batch_size=128, max_iter=350, early_stopping=True, random_state=42), False),
-    "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010, batch_size=128, max_iter=350, early_stopping=True, random_state=42), False)
-}
+    # Fit NNLS Meta-Learner on this seed
+    nnls_meta = LinearRegression(positive=True, fit_intercept=True)
+    nnls_meta.fit(oof_logits, y)
 
-m_names = list(linear_base_models.keys())
-lin_oof_probs = np.zeros((len(X), len(m_names)))
-lin_test_fold_preds = np.zeros((len(X_test), len(m_names), N_SPLITS))
+    raw_weights = nnls_meta.coef_
+    sum_w = np.sum(raw_weights)
+    norm_weights = raw_weights / sum_w if sum_w > 0 else np.ones(N_MODELS) / N_MODELS
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X_linear, y)):
-    X_tr_f, y_tr_f = X_linear.iloc[train_idx], y.iloc[train_idx]
-    X_va_f, y_va_f = X_linear.iloc[val_idx], y.iloc[val_idx]
+    # Calculate this seed's OOF score
+    seed_oof_logits = np.dot(oof_logits, norm_weights)
+    seed_oof_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-seed_oof_logits)))
+    all_seed_oof_scores.append(seed_oof_auc)
+    print(f"  🏆 Seed {cv_seed} Stacked OOF AUC = {seed_oof_auc:.5f}")
 
-    for m_idx, (m_name, (m_obj, use_q)) in enumerate(linear_base_models.items()):
-        preproc = build_linear_preprocessor(linear_num_cols, linear_cat_cols, use_quantile=use_q)
-        pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
-        pipe.fit(X_tr_f, y_tr_f)
-        lin_oof_probs[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        lin_test_fold_preds[:, m_idx, fold] = pipe.predict_proba(X_test_linear)[:, 1]
+    # Generate test logits for this seed
+    avg_test_probs = test_fold_predictions.mean(axis=2)
+    test_logits = np.zeros_like(avg_test_probs)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+        test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-# NNLS Meta-Optimization for Linear Engine
-lin_oof_logits = np.zeros_like(lin_oof_probs)
-for m_idx in range(len(m_names)):
-    p_cl = np.clip(lin_oof_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    lin_oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-nnls_meta = LinearRegression(positive=True, fit_intercept=True)
-nnls_meta.fit(lin_oof_logits, y)
-
-w_raw = nnls_meta.coef_
-w_norm = w_raw / np.sum(w_raw) if np.sum(w_raw) > 0 else np.ones(len(m_names)) / len(m_names)
-
-lin_stacked_oof_logits = np.dot(lin_oof_logits, w_norm)
-lin_total_oof_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-lin_stacked_oof_logits)))
-print(f"🏆 Engine 2 (0.66054 NNLS Super-Learner) OOF ROC-AUC: {lin_total_oof_auc:.5f}")
+    seed_test_logits = np.dot(test_logits, norm_weights)
+    all_superlearner_test_logits.append(seed_test_logits)
 
 
 # ============================================================
-# 7. DUAL-ENGINE PROBABILITY INTEGRATION (50% GBDT + 50% NNLS)
+# 6. ENSEMBLE OF REPEATED SUPER-LEARNERS
 # ============================================================
 
 print("\n============================================")
-print("FUSING GBDT TREE ENGINE WITH NNLS SUPER-LEARNER")
+print("INTEGRATING REPEATED SUPER-LEARNER TEST PREDICTIONS")
 print("============================================")
 
-# Engine 1 Test Logits
-tree_final_test_probs = tree_test_fold_preds.mean(axis=1)
-p_tree_cl = np.clip(tree_final_test_probs, 1e-6, 1.0 - 1e-6)
-z_tree = np.log(p_tree_cl / (1.0 - p_tree_cl))
+mean_repeated_test_logits = np.mean(all_superlearner_test_logits, axis=0)
+final_probabilities = 1.0 / (1.0 + np.exp(-mean_repeated_test_logits))
 
-# Engine 2 Test Logits
-avg_lin_test_probs = lin_test_fold_preds.mean(axis=2)
-z_lin_models = np.zeros_like(avg_lin_test_probs)
-for m_idx in range(len(m_names)):
-    p_cl = np.clip(avg_lin_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    z_lin_models[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-z_linear = np.dot(z_lin_models, w_norm)
-
-# 50% Tree Engine + 50% Linear/Neural Super-Learner
-final_integrated_logits = 0.50 * z_tree + 0.50 * z_linear
-final_probabilities = 1.0 / (1.0 + np.exp(-final_integrated_logits))
+mean_oof_score = np.mean(all_seed_oof_scores)
+print(f"Mean Repeated Stacked OOF AUC: {mean_oof_score:.5f}")
 
 
 # ============================================================
-# 8. VALIDATE & SAVE SUBMISSION FILE
+# 7. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -431,7 +432,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp73_panel_gbdt_superlearner.csv"
+output_file = "submission_exp74_panel_pure_nnls_superlearner.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -442,11 +443,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 9. SUMMARY & BENCHMARKS
+# 8. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 73 COMPLETE")
+print("EXPERIMENT 74 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -460,10 +461,9 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print(f"Engine 1 (Native GBDT Trees) OOF AUC : {tree_total_oof_auc:.5f}")
-print(f"Engine 2 (0.66054 NNLS Stack) OOF AUC: {lin_total_oof_auc:.5f}")
-print("Exp 68 Baseline Benchmark            : 0.66054")
-print("Exp 73 Full-Panel Hybrid Submission  : READY")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832")
+print("Exp 68 Single 5-Fold NNLS           : 0.66054 (Personal Best)")
+print(f"Exp 74 Panel Pure-NNLS Super-Learner: Mean OOF = {mean_oof_score:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
