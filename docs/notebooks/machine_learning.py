@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 71 — GRAND MASTER CALIBRATED SUPER-LEARNER
-# (PRECISION NNLS ENGINE + MULTI-CHAMPION LOGIT FUSION)
+# EXPERIMENT 72 — BAYESIAN-SMOOTHED SPATIAL SEM & EXPANDED NNLS
+# (IN-FOLD BAYESIAN M-ESTIMATES + PURE SEM + 12-MODEL NNLS SUPER-LEARNER)
 # ============================================================
 
 import pandas as pd
@@ -20,8 +20,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 71")
-print("GRAND MASTER CALIBRATED SUPER-LEARNER")
+print("EXPERIMENT 72")
+print("BAYESIAN-SMOOTHED SPATIAL SEM & EXPANDED NNLS")
 print("============================================")
 
 
@@ -37,10 +37,11 @@ if not DATA_DIR.exists():
 
 
 # ============================================================
-# 2. EXACT PROVEN SEM LATENT FEATURE EXTRACTION
+# 2. FEATURE EXTRACTION & DOMAIN PARSERS
 # ============================================================
 
 target = "employed_status"
+GLOBAL_PRIOR = 0.31694
 
 def parse_matric_band(val):
     """Converts matric percentage strings into continuous numeric marks."""
@@ -70,8 +71,8 @@ def parse_matric_band(val):
             return np.nan
 
 
-def extract_pure_sem_features(train_df, test_df):
-    """Extracts the exact winning Exp 59/68 SEM Latent Factor representation."""
+def extract_base_and_sem_features(train_df, test_df):
+    """Extracts date/lag signals and builds SEM Latent Factor blocks."""
     tr = train_df.copy()
     te = test_df.copy()
 
@@ -112,7 +113,9 @@ def extract_pure_sem_features(train_df, test_df):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    # Latent SEM Blocks
+    # ------------------------------------------------------------
+    # SEM LATENT FACTOR EXTRACTION
+    # ------------------------------------------------------------
     acad_cols = [c for c in tr.columns if "_score" in c]
     labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
@@ -158,6 +161,38 @@ def extract_pure_sem_features(train_df, test_df):
     return tr, te
 
 
+# ============================================================
+# 3. IN-FOLD BAYESIAN M-ESTIMATE ENCODER
+# ============================================================
+
+def apply_in_fold_bayesian_encoding(X_train_df, y_train_s, X_val_df, X_test_df, high_card_cols, m=30.0):
+    """
+    Computes smoothed Bayesian posterior target encoding strictly in-fold to avoid leakage:
+    P(Y=1|Category) = (Sum(Y) + m * Global_Prior) / (Count + m)
+    """
+    X_tr = X_train_df.copy()
+    X_va = X_val_df.copy()
+    X_te = X_test_df.copy()
+
+    for col in high_card_cols:
+        if col in X_tr.columns:
+            counts = X_tr.groupby(col).size()
+            sums = y_train_s.groupby(X_tr[col]).sum()
+
+            smooth_map = (sums + m * GLOBAL_PRIOR) / (counts + m)
+
+            X_tr[f"{col}_bayes_enc"] = X_tr[col].map(smooth_map).fillna(GLOBAL_PRIOR).astype(float)
+            X_va[f"{col}_bayes_enc"] = X_va[col].map(smooth_map).fillna(GLOBAL_PRIOR).astype(float)
+            X_te[f"{col}_bayes_enc"] = X_te[col].map(smooth_map).fillna(GLOBAL_PRIOR).astype(float)
+
+            # Drop the high-cardinality raw text column
+            X_tr.drop(columns=[col], inplace=True)
+            X_va.drop(columns=[col], inplace=True)
+            X_te.drop(columns=[col], inplace=True)
+
+    return X_tr, X_va, X_te
+
+
 def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     """Builds standard or quantile-normalized preprocessor."""
     transformers = []
@@ -181,102 +216,204 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
 
 
 # ============================================================
-# 3. COMPLETE EXP 68 BASE MODEL SUITE
+# 4. EXPANDED 12-MODEL NNLS CANDIDATE SUITE
 # ============================================================
 
-def get_base_model_dict(seed=42):
-    """Returns the full 9-model suite that achieved 0.66054."""
+def get_expanded_model_dict(seed=42):
+    """Returns 12 high-precision models across ElasticNet grids and Neural Architectures."""
     return {
-        "LogReg_L2_C006": (LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_L2_C010": (LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), False),
-        "LogReg_ElasticNet_C008": (LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed), False),
-        "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), False),
-        "Quantile_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed), True),
-        "Quantile_LogReg_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed), True),
-        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
-                                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                           n_iter_no_change=20, validation_fraction=0.15, random_state=seed), False),
-        "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                                         batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
-                                         n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100), False)
+        # 1. Quantile-Gaussian ElasticNet Grid
+        "Quantile_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Quantile_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True
+        ),
+        "Quantile_ElasticNet_C012": (
+            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            True
+        ),
+        # 2. Standard Scaled ElasticNet SAGA Grid
+        "Standard_ElasticNet_C008": (
+            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_ElasticNet_C012": (
+            LogisticRegression(C=0.12, penalty="elasticnet", solver="saga", l1_ratio=0.12, max_iter=1000, random_state=seed),
+            False
+        ),
+        # 3. L2 Anchor Baselines
+        "Standard_LogReg_L2_C008": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False
+        ),
+        "Standard_LogReg_L2_C010": (
+            LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=seed),
+            False
+        ),
+        # 4. Multi-Scale Neural Networks (ReLU)
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed),
+            False
+        ),
+        "MLP_Deep_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 50),
+            False
+        ),
+        "MLP_Compact_48_24": (
+            MLPClassifier(hidden_layer_sizes=(48, 24), activation="relu", solver="adam", alpha=0.008,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100),
+            False
+        ),
+        # 5. Smooth Continuous Tanh-Activated MLP
+        "MLP_Tanh_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                          n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 150),
+            False
+        )
     }
 
 
 # ============================================================
-# 4. LOAD DATASET & GENERATE FRESH NNLS SUPER-LEARNER
+# 5. LOAD & PREPARE DATASET
 # ============================================================
 
 print("\n============================================")
-print("LOADING DATA & RUNNING NNLS SUPER-LEARNER ENGINE")
+print("EXTRACTING BASE SEM LATENT MANIFOLD")
 print("============================================")
 
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
 
-train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
+train_sem, test_sem = extract_base_and_sem_features(train_raw, test_raw)
 
 common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
 
 y = train_sem[target].reset_index(drop=True)
 X = train_sem[common_cols].reset_index(drop=True)
-X_test = test_sem[common_cols].reset_index(drop=True)
+X_test_base = test_sem[common_cols].reset_index(drop=True)
 
-# Drop high-cardinality categorical (>100)
-categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
-high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
-if high_cardinality:
-    X = X.drop(columns=high_cardinality)
-    X_test = X_test.drop(columns=high_cardinality)
+# Identify high-cardinality features for in-fold Bayesian encoding
+all_cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+high_card_cols = [c for c in all_cat_cols if X[c].nunique(dropna=True) > 25]
 
-categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
-numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
+print(f"Full dataset: {len(X)} observations")
+print(f"High-cardinality spatial & qualification features for Bayesian Encoding: {high_card_cols}")
 
-print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
-# 5-Fold Stratified CV
+# ============================================================
+# 6. 5-FOLD OOF EXTRACTION & NNLS META-OPTIMIZATION
+# ============================================================
+
+print("\n============================================")
+print("GENERATING 5-FOLD OOF PREDICTIONS (WITH IN-FOLD BAYESIAN ENCODING)")
+print("============================================")
+
 N_SPLITS = 5
 skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-model_names = list(get_base_model_dict(seed=42).keys())
+model_names = list(get_expanded_model_dict(seed=42).keys())
 N_MODELS = len(model_names)
 
 oof_probabilities = np.zeros((len(X), N_MODELS))
-test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+test_fold_predictions = np.zeros((len(X_test_base), N_MODELS, N_SPLITS))
 
 for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
-    X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
+    X_tr_raw, y_tr_f = X.iloc[train_idx].copy(), y.iloc[train_idx].copy()
+    X_va_raw, y_va_f = X.iloc[val_idx].copy(), y.iloc[val_idx].copy()
+    X_te_raw = X_test_base.copy()
 
-    models_dict = get_base_model_dict(seed=42 + fold * 10)
+    # Apply Bayesian M-Estimate Target Encoding strictly in-fold (zero leakage)
+    X_tr_f, X_va_f, X_te_f = apply_in_fold_bayesian_encoding(
+        X_tr_raw, y_tr_f, X_va_raw, X_te_raw, high_card_cols, m=30.0
+    )
+
+    # Re-detect column types after encoding
+    cat_cols_f = X_tr_f.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols_f = X_tr_f.select_dtypes(include=[np.number]).columns.tolist()
+
+    models_dict = get_expanded_model_dict(seed=42 + fold * 10)
 
     for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+        preprocessor = build_preprocessor(num_cols_f, cat_cols_f, use_quantile=use_quantile)
         pipe = Pipeline([
             ("preprocessor", preprocessor),
             ("model", model_obj)
         ])
         pipe.fit(X_tr_f, y_tr_f)
-        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+        
+        p_val = pipe.predict_proba(X_va_f)[:, 1]
+        oof_probabilities[val_idx, m_idx] = p_val
+        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_te_f)[:, 1]
 
     print(f"Fold {fold + 1}/{N_SPLITS} Complete.")
 
-# NNLS Meta-Optimization
+
+# Individual OOF Scores
+print("\n--- Individual Base Model OOF ROC-AUC Scores ---")
+for m_idx, m_name in enumerate(model_names):
+    auc = roc_auc_score(y, oof_probabilities[:, m_idx])
+    print(f"Model {m_idx + 1:02d} ({m_name:<32}): OOF AUC = {auc:.5f}")
+
+
+# ============================================================
+# 7. NON-NEGATIVE CONSTRAINED META-OPTIMIZATION
+# ============================================================
+
+print("\n============================================")
+print("FITTING NON-NEGATIVE CONSTRAINED META-LEARNER")
+print("============================================")
+
+# Convert OOF probabilities to Logit Space
 oof_logits = np.zeros_like(oof_probabilities)
 for m_idx in range(N_MODELS):
     p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
     oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
+# Fit Non-Negative Meta-Learner (strictly positive w >= 0)
 nnls_meta = LinearRegression(positive=True, fit_intercept=True)
 nnls_meta.fit(oof_logits, y)
 
 raw_weights = nnls_meta.coef_
-sum_w = np.sum(raw_weights)
-normalized_weights = raw_weights / sum_w if sum_w > 0 else np.ones(N_MODELS) / N_MODELS
+sum_weights = np.sum(raw_weights)
+normalized_weights = raw_weights / sum_weights if sum_weights > 0 else np.ones(N_MODELS) / N_MODELS
 
-# Calculate Fresh NNLS Test Logits
+print("Learned Non-Negative Meta-Weights:")
+weight_summary = pd.DataFrame({
+    "Base Model": model_names,
+    "Raw Weight": raw_weights,
+    "Normalized %": normalized_weights * 100
+}).sort_values(by="Normalized %", ascending=False).reset_index(drop=True)
+
+print(weight_summary.to_string(index=False))
+
+# Calculate Meta-Learner OOF Score
+stacked_oof_logits = np.dot(oof_logits, normalized_weights)
+stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
+stacked_oof_auc = roc_auc_score(y, stacked_oof_probs)
+
+print(f"\n🏆 Bayesian-SEM Super Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
+
+
+# ============================================================
+# 8. TEST PREDICTION INFERENCE
+# ============================================================
+
+print("\nGenerating final test predictions via Bayesian-SEM Super Learner...")
+
 avg_test_probs = test_fold_predictions.mean(axis=2)
 test_logits = np.zeros_like(avg_test_probs)
 
@@ -284,54 +421,12 @@ for m_idx in range(N_MODELS):
     p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
     test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-fresh_nnls_logits = np.dot(test_logits, normalized_weights)
+final_test_logits = np.dot(test_logits, normalized_weights)
+final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
 
 
 # ============================================================
-# 5. MULTI-CHAMPION CONSENSUS FUSION
-# ============================================================
-
-print("\n============================================")
-print("INTEGRATING PAST TOP CHAMPIONS IN LOGIT SPACE")
-print("============================================")
-
-champion_files = {
-    "submission_exp68_nnls_sem_superlearner.csv": 0.55,           # 0.66054 Current Best
-    "submission_exp70_repeated_5fold_nnls_superlearner.csv": 0.35, # 0.65998
-    "submission_exp59_sem_latent_titan_ensemble.csv": 0.10        # 0.65832
-}
-
-discovered_logits = []
-discovered_weights = []
-
-for filename, weight in champion_files.items():
-    f_path = CURRENT_DIR / filename
-    if f_path.exists():
-        sub_df = pd.read_csv(f_path)
-        if target in sub_df.columns and len(sub_df) == len(test_raw):
-            p = np.clip(sub_df[target].to_numpy(), 1e-6, 1.0 - 1e-6)
-            z = np.log(p / (1.0 - p))
-            discovered_logits.append(z)
-            discovered_weights.append(weight)
-            print(f" -> [LOADED] {filename:<52} (Weight: {weight*100:.0f}%)")
-
-if len(discovered_logits) > 0:
-    total_w = sum(discovered_weights)
-    norm_w = [w / total_w for w in discovered_weights]
-    past_champions_logits = sum(w * z for w, z in zip(norm_w, discovered_logits))
-
-    # 60% Fresh NNLS Engine + 40% Past Champions Consensus
-    final_master_logits = 0.60 * fresh_nnls_logits + 0.40 * past_champions_logits
-    print("✅ Successfully fused fresh NNLS Super-Learner with past >= 0.658 champions.")
-else:
-    final_master_logits = fresh_nnls_logits
-    print("ℹ️ Using fresh NNLS Super-Learner engine predictions directly.")
-
-final_probabilities = 1.0 / (1.0 + np.exp(-final_master_logits))
-
-
-# ============================================================
-# 6. VALIDATE & SAVE SUBMISSION FILE
+# 9. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -341,7 +436,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp71_grand_master_calibrated_superlearner.csv"
+output_file = "submission_exp72_bayesian_sem_expanded_nnls.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -352,11 +447,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 7. SUMMARY & BENCHMARKS
+# 10. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 71 COMPLETE")
+print("EXPERIMENT 72 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -371,9 +466,9 @@ print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
 print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 70 Repeated 5-Fold NNLS         : 0.65998")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
-print("Exp 71 Grand Master Super-Learner   : READY")
+print("Exp 71 Grand Master Super-Learner   : 0.66051")
+print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Previous Best)")
+print(f"Exp 72 Bayesian-SEM Super Learner   : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
