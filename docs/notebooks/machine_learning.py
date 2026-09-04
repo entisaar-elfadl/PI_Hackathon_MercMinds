@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 89 — LATENT CLUSTER PROFILING & BAYESIAN CALIBRATED SUPER-LEARNER
-# (SEM CLUSTER ARCHETYPES + 0.66054 ELASTIC/MLP ENGINE + BAYESIAN PRIOR ALIGNMENT)
+# EXPERIMENT 90 — UNIFIED NNLS CLUSTER-SEM GRAND TITAN
+# (SOFTMAX ARCHETYPE CLUSTERING + PURE SEM + NATURAL NNLS STACKING)
 # ============================================================
 
 import pandas as pd
@@ -21,8 +21,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 89")
-print("LATENT CLUSTER PROFILING & BAYESIAN CALIBRATED SUPER-LEARNER")
+print("EXPERIMENT 90")
+print("UNIFIED NNLS CLUSTER-SEM GRAND TITAN")
 print("============================================")
 
 
@@ -40,7 +40,6 @@ train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
 target = "employed_status"
-GLOBAL_PRIOR = 0.31694
 
 
 # ============================================================
@@ -182,11 +181,11 @@ numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 sem_latent_cols = [c for c in numerical_features if "latent_" in c or "pls_" in c]
 
 print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
-print(f"SEM Latent Factors for Clustering: {sem_latent_cols}")
+print(f"SEM Latent Factors for Soft Clustering: {sem_latent_cols}")
 
 
 # ============================================================
-# 4. PREPROCESSOR & 8-MODEL HIGH-VALUE SUITE
+# 4. PREPROCESSOR & PROVEN BASE MODEL DEFINITIONS
 # ============================================================
 
 def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
@@ -246,11 +245,11 @@ def get_base_model_dict(seed=42):
 
 
 # ============================================================
-# 5. 5-FOLD IN-FOLD CLUSTERING & OOF GENERATION
+# 5. 5-FOLD IN-FOLD SOFTMAX CLUSTERING & OOF GENERATION
 # ============================================================
 
 print("\n============================================")
-print("RUNNING 5-FOLD CV WITH IN-FOLD LATENT CLUSTERING (K=4)")
+print("RUNNING 5-FOLD CV WITH SOFTMAX ARCHETYPE CLUSTERING (K=4)")
 print("============================================")
 
 N_SPLITS = 5
@@ -262,23 +261,36 @@ N_MODELS = len(model_names)
 oof_probabilities = np.zeros((len(X), N_MODELS))
 test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
+def compute_softmax_cluster_memberships(distances):
+    """Converts cluster Euclidean distances into smooth Softmax probabilities."""
+    # Scale distances to prevent underflow
+    mean_d = np.mean(distances, axis=1, keepdims=True) + 1e-6
+    neg_scaled = -distances / mean_d
+    exp_d = np.exp(neg_scaled - np.max(neg_scaled, axis=1, keepdims=True))
+    return exp_d / np.sum(exp_d, axis=1, keepdims=True)
+
+
 for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr_f, y_tr_f = X.iloc[train_idx].copy(), y.iloc[train_idx].copy()
     X_va_f, y_va_f = X.iloc[val_idx].copy(), y.iloc[val_idx].copy()
     X_te_f = X_test.copy()
 
-    # In-Fold K-Means Archetype Clustering (K=4) strictly on train fold
+    # Fit K-Means on SEM Latent Space strictly in-fold (zero leakage)
     kmeans = KMeans(n_clusters=4, random_state=42 + fold, n_init=10)
     
-    # Extract distances to archetype centroids
-    tr_cluster_dists = kmeans.fit_transform(X_tr_f[sem_latent_cols])
-    va_cluster_dists = kmeans.transform(X_va_f[sem_latent_cols])
-    te_cluster_dists = kmeans.transform(X_te_f[sem_latent_cols])
+    tr_dists = kmeans.fit_transform(X_tr_f[sem_latent_cols])
+    va_dists = kmeans.transform(X_va_f[sem_latent_cols])
+    te_dists = kmeans.transform(X_te_f[sem_latent_cols])
+
+    # Convert to smooth Softmax archetype probabilities
+    tr_probs = compute_softmax_cluster_memberships(tr_dists)
+    va_probs = compute_softmax_cluster_memberships(va_dists)
+    te_probs = compute_softmax_cluster_memberships(te_dists)
 
     for k in range(4):
-        X_tr_f[f"latent_cluster_dist_{k}"] = tr_cluster_dists[:, k]
-        X_va_f[f"latent_cluster_dist_{k}"] = va_cluster_dists[:, k]
-        X_te_f[f"latent_cluster_dist_{k}"] = te_cluster_dists[:, k]
+        X_tr_f[f"sem_archetype_prob_{k}"] = tr_probs[:, k]
+        X_va_f[f"sem_archetype_prob_{k}"] = va_probs[:, k]
+        X_te_f[f"sem_archetype_prob_{k}"] = te_probs[:, k]
 
     num_cols_with_clusters = X_tr_f.select_dtypes(include=[np.number]).columns.tolist()
 
@@ -299,33 +311,33 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
 
 
 # Individual OOF Scores
-print("\n--- Individual Model OOF ROC-AUC Scores (With Clustering) ---")
+print("\n--- Individual Base Model OOF ROC-AUC Scores (With Soft Clustering) ---")
 for m_idx, m_name in enumerate(model_names):
     auc = roc_auc_score(y, oof_probabilities[:, m_idx])
     print(f"Model {m_idx + 1:02d} ({m_name:<30}): OOF AUC = {auc:.5f}")
 
 
 # ============================================================
-# 6. NON-NEGATIVE LEAST SQUARES (NNLS) META-OPTIMIZATION
+# 6. PURE NON-NEGATIVE LEAST SQUARES (NNLS) META-OPTIMIZATION
 # ============================================================
 
 print("\n============================================")
-print("FITTING NON-NEGATIVE CONSTRAINED META-LEARNER")
+print("SOLVING PURE NON-NEGATIVE CONSTRAINED META-WEIGHTS")
 print("============================================")
 
-# Convert OOF to Logit Space
+# Convert OOF probabilities to Logit Space
 oof_logits = np.zeros_like(oof_probabilities)
 for m_idx in range(N_MODELS):
     p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
     oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-# Fit NNLS Meta-Learner (strictly non-negative w >= 0)
+# Solve Non-Negative Least Squares (w_i >= 0)
 nnls_meta = LinearRegression(positive=True, fit_intercept=True)
 nnls_meta.fit(oof_logits, y)
 
 raw_weights = nnls_meta.coef_
-sum_w = np.sum(raw_weights)
-normalized_weights = raw_weights / sum_w if sum_w > 0 else np.ones(N_MODELS) / N_MODELS
+sum_weights = np.sum(raw_weights)
+normalized_weights = raw_weights / sum_weights if sum_weights > 0 else np.ones(N_MODELS) / N_MODELS
 
 print("Learned Non-Negative Meta-Weights:")
 weight_summary = pd.DataFrame({
@@ -336,18 +348,19 @@ weight_summary = pd.DataFrame({
 
 print(weight_summary.to_string(index=False))
 
+# Calculate Natural Calibrated OOF Score (Zero Artificial Shifts)
 stacked_oof_logits = np.dot(oof_logits, normalized_weights)
 stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
 stacked_oof_auc = roc_auc_score(y, stacked_oof_probs)
 
-print(f"\n🏆 Clustered NNLS Super-Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
+print(f"\n🏆 Unified Cluster-SEM Super-Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
 
 
 # ============================================================
-# 7. INFERENCE ON TEST SET WITH BAYESIAN PRIOR ALIGNMENT
+# 7. NATURAL INFERENCE ON TEST SET
 # ============================================================
 
-print("\nGenerating final test predictions with Bayesian Prior Calibration...")
+print("\nGenerating final test predictions via Natural NNLS Stacking...")
 
 avg_test_probs = test_fold_predictions.mean(axis=2)
 test_logits = np.zeros_like(avg_test_probs)
@@ -358,13 +371,8 @@ for m_idx in range(N_MODELS):
 
 final_test_logits = np.dot(test_logits, normalized_weights)
 
-# Bayesian Log-Odds Prior Alignment (sharpens calibration around empirical 31.69% prior)
-raw_test_mean_p = np.mean(1.0 / (1.0 + np.exp(-final_test_logits)))
-prior_shift = np.log(GLOBAL_PRIOR / (1.0 - GLOBAL_PRIOR)) - np.log(raw_test_mean_p / (1.0 - raw_test_mean_p))
-
-# 80% Original Stacker Logit + 20% Prior Shift (micro-adjustment)
-calibrated_test_logits = final_test_logits + 0.20 * prior_shift
-final_probabilities = 1.0 / (1.0 + np.exp(-calibrated_test_logits))
+# Natural Logistic Sigmoid (Preserves exact Exp 68 probability calibration)
+final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
 
 
 # ============================================================
@@ -378,7 +386,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp89_latent_clusters_calibrated_superlearner.csv"
+output_file = "submission_exp90_unified_nnls_cluster_sem.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -393,7 +401,7 @@ submission.to_csv(output_file, index=False)
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 89 COMPLETE")
+print("EXPERIMENT 90 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -409,7 +417,7 @@ print("BENCHMARKS")
 print("============================================")
 print("Exp 59 Pure SEM Latent Titan        : 0.65832")
 print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
-print(f"Exp 89 Latent Clusters Super-Learner: OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print(f"Exp 90 Unified Cluster-SEM Super    : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
