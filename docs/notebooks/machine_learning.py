@@ -1,11 +1,12 @@
 # ============================================================
-# EXPERIMENT 92 — SEMI-SUPERVISED PSEUDO-LABELED NNLS SUPER-LEARNER
-# (ROUND 9 TRANSDUCTIVE DOMAIN ADAPTATION + SEM LATENT MANIFOLD + NNLS)
+# EXPERIMENT 93 — SIMPLEX CONVEX OPTIMIZATION & LOSS REDESIGN
+# (SLSQP LOG-LOSS SIMPLEX + DIRECT AUC MAXIMIZER + EXP 68 CORE)
 # ============================================================
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from scipy.optimize import minimize
 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -16,12 +17,12 @@ from sklearn.cross_decomposition import PLSRegression
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, log_loss
 
 
 print("============================================")
-print("EXPERIMENT 92")
-print("SEMI-SUPERVISED PSEUDO-LABELED NNLS SUPER-LEARNER")
+print("EXPERIMENT 93")
+print("SIMPLEX CONVEX OPTIMIZATION & LOSS REDESIGN")
 print("============================================")
 
 
@@ -42,7 +43,7 @@ target = "employed_status"
 
 
 # ============================================================
-# 2. FEATURE PARSERS & SEM FACTOR EXTRACTION
+# 2. EXACT WINNING 0.66054 SEM FEATURE PIPELINE
 # ============================================================
 
 def parse_matric_band(val):
@@ -64,15 +65,13 @@ def parse_matric_band(val):
 
 
 def extract_pure_sem_features(train_df, test_df):
-    """Extracts the exact winning Exp 59/68 SEM Latent Factor representation."""
     tr = train_df.copy()
     te = test_df.copy()
 
     # Clean target
-    if target in tr.columns:
-        tr[target] = pd.to_numeric(tr[target], errors="coerce")
-        tr = tr.dropna(subset=[target]).copy()
-        tr[target] = tr[target].astype(int)
+    tr[target] = pd.to_numeric(tr[target], errors="coerce")
+    tr = tr.dropna(subset=[target]).copy()
+    tr[target] = tr[target].astype(int)
 
     for df in [tr, te]:
         if "anonymised_id" in df.columns:
@@ -172,6 +171,10 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     return ColumnTransformer(transformers=transformers)
 
 
+# ============================================================
+# 3. EXACT WINNING 9-MODEL BASE SUITE (EXP 68)
+# ============================================================
+
 def get_base_model_dict(seed=42):
     return {
         "LogReg_L2_C006": (LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), False),
@@ -181,21 +184,21 @@ def get_base_model_dict(seed=42):
         "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed), False),
         "Quantile_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), True),
         "Quantile_LogReg_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed), True),
-        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
-                                           batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                                           n_iter_no_change=25, validation_fraction=0.15, random_state=seed), False),
+        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.01,
+                                           batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                                           n_iter_no_change=20, validation_fraction=0.15, random_state=seed), False),
         "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                                         batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                                         n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 100), False)
+                                         batch_size=128, learning_rate_init=0.001, max_iter=350, early_stopping=True,
+                                         n_iter_no_change=20, validation_fraction=0.15, random_state=seed + 100), False)
     }
 
 
 # ============================================================
-# 3. PHASE 1: FIT TEACHER MODEL (0.66054 NNLS ENGINE)
+# 4. LOAD DATASET & RUN 5-FOLD OOF EXTRACTION
 # ============================================================
 
 print("\n============================================")
-print("PHASE 1: TRAINING TEACHER MODEL (EXP 68 NNLS ENGINE)")
+print("EXTRACTING PURE SEM LATENT MANIFOLD")
 print("============================================")
 
 train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
@@ -205,7 +208,6 @@ y = train_sem[target].reset_index(drop=True)
 X = train_sem[common_cols].reset_index(drop=True)
 X_test = test_sem[common_cols].reset_index(drop=True)
 
-# Drop high-cardinality categorical (>100)
 categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
 high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
 if high_cardinality:
@@ -215,18 +217,19 @@ if high_cardinality:
 categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
 numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-print(f"Teacher Train observations: {len(X)} | Features: {len(numerical_features)} num, {len(categorical_features)} cat")
+print(f"Dataset: {len(X)} observations | {len(numerical_features)} numerical, {len(categorical_features)} categorical")
 
-# 5-Fold Stratified CV for Teacher
+# 5-Fold Stratified CV
 N_SPLITS = 5
 skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
 model_names = list(get_base_model_dict(seed=42).keys())
 N_MODELS = len(model_names)
 
-oof_probs_teacher = np.zeros((len(X), N_MODELS))
-test_fold_preds_teacher = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+oof_probabilities = np.zeros((len(X), N_MODELS))
+test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
+print("\nGenerating 5-Fold OOF Predictions...")
 for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
     X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
@@ -238,128 +241,169 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
         pipe = Pipeline([("preprocessor", preprocessor), ("model", model_obj)])
         pipe.fit(X_tr_f, y_tr_f)
         
-        oof_probs_teacher[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_preds_teacher[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-# Teacher NNLS Optimization
-oof_logits_teacher = np.zeros_like(oof_probs_teacher)
+    print(f"  -> Fold {fold + 1}/{N_SPLITS} Complete.")
+
+
+# Convert OOF & Test Probabilities to Logit Space
+oof_logits = np.zeros_like(oof_probabilities)
 for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probs_teacher[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits_teacher[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
+    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-nnls_teacher = LinearRegression(positive=True, fit_intercept=True).fit(oof_logits_teacher, y)
-norm_weights_teacher = nnls_teacher.coef_ / np.sum(nnls_teacher.coef_) if np.sum(nnls_teacher.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
-
-# Teacher Predictions on Round 9 Test Set
-avg_test_probs_teacher = test_fold_preds_teacher.mean(axis=2)
-test_logits_teacher = np.zeros_like(avg_test_probs_teacher)
+avg_test_probs = test_fold_predictions.mean(axis=2)
+test_logits = np.zeros_like(avg_test_probs)
 for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs_teacher[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits_teacher[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-teacher_test_logits = np.dot(test_logits_teacher, norm_weights_teacher)
-teacher_test_probabilities = 1.0 / (1.0 + np.exp(-teacher_test_logits))
+    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
 
 # ============================================================
-# 4. PHASE 2: HIGH-CONFIDENCE PSEUDO-LABELING
+# 5. BENCHMARKING ADVANCED CONVEX OPTIMIZERS
 # ============================================================
 
 print("\n============================================")
-print("PHASE 2: EXTRACTING HIGH-CONFIDENCE ROUND 9 PSEUDO-LABELS")
+print("BENCHMARKING CONVEX OPTIMIZATION FORMULATIONS")
 print("============================================")
 
-# Selection criteria for confident Round 9 predictions
-POS_THRESHOLD = 0.76
-NEG_THRESHOLD = 0.14
+y_true_vals = y.to_numpy()
 
-pseudo_pos_mask = teacher_test_probabilities >= POS_THRESHOLD
-pseudo_neg_mask = teacher_test_probabilities <= NEG_THRESHOLD
-pseudo_mask = pseudo_pos_mask | pseudo_neg_mask
+# ------------------------------------------------------------
+# 1. BASELINE: Classic OLS-NNLS (Exp 68 Baseline)
+# ------------------------------------------------------------
+nnls_classic = LinearRegression(positive=True, fit_intercept=True).fit(oof_logits, y_true_vals)
+w_classic = nnls_classic.coef_ / np.sum(nnls_classic.coef_) if np.sum(nnls_classic.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
+auc_classic = roc_auc_score(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_classic))))
+loss_classic = log_loss(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_classic))))
+print(f"1. Classic OLS-NNLS Baseline   : OOF AUC = {auc_classic:.5f} | Log-Loss = {loss_classic:.5f}")
 
-n_pos = np.sum(pseudo_pos_mask)
-n_neg = np.sum(pseudo_neg_mask)
-n_total_pseudo = np.sum(pseudo_mask)
 
-print(f" -> Confident Positive Pseudo-Labels (P >= {POS_THRESHOLD}): {n_pos}")
-print(f" -> Confident Negative Pseudo-Labels (P <= {NEG_THRESHOLD}): {n_neg}")
-print(f" -> Total Round 9 Pseudo-Labels Added: {n_total_pseudo} ({n_total_pseudo/len(test_raw)*100:.1f}% of Test Set)")
+# ------------------------------------------------------------
+# 2. CONVEX OPTIMIZER A: Simplex-Constrained Log-Loss (SLSQP)
+# Directly minimizes cross-entropy: min -sum(y*log(p) + (1-y)*log(1-p)) s.t. w >= 0, sum(w) = 1
+# ------------------------------------------------------------
+def simplex_logloss_objective(weights, z_matrix, y_true):
+    z_blend = np.dot(z_matrix, weights)
+    p_blend = np.clip(1.0 / (1.0 + np.exp(-z_blend)), 1e-7, 1.0 - 1e-7)
+    return log_loss(y_true, p_blend)
 
-# Construct Pseudo-Labeled Dataset
-X_pseudo = X_test[pseudo_mask].copy()
-y_pseudo = np.where(pseudo_pos_mask[pseudo_mask], 1, 0)
+constraints_simplex = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
+bounds_simplex = [(0.0, 1.0) for _ in range(N_MODELS)]
+w_init = np.ones(N_MODELS) / N_MODELS
 
-# Augment Training Dataset
-X_augmented = pd.concat([X, X_pseudo], axis=0).reset_index(drop=True)
-y_augmented = pd.concat([pd.Series(y), pd.Series(y_pseudo)], axis=0).reset_index(drop=True)
+opt_logloss = minimize(
+    simplex_logloss_objective,
+    w_init,
+    args=(oof_logits, y_true_vals),
+    method='SLSQP',
+    bounds=bounds_simplex,
+    constraints=constraints_simplex,
+    options={'maxiter': 500, 'ftol': 1e-9}
+)
+w_slsqp = opt_logloss.x / np.sum(opt_logloss.x)
+auc_slsqp = roc_auc_score(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_slsqp))))
+loss_slsqp = log_loss(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_slsqp))))
+print(f"2. Simplex Log-Loss (SLSQP)    : OOF AUC = {auc_slsqp:.5f} | Log-Loss = {loss_slsqp:.5f}")
 
-print(f"Augmented Training Size: {len(X_augmented)} rows (16,653 Train + {n_total_pseudo} Round 9 Pseudo-Labels)")
+
+# ------------------------------------------------------------
+# 3. CONVEX OPTIMIZER B: Direct Simplex ROC-AUC Maximizer (Nelder-Mead)
+# Directly maximizes the rank-ordering competition metric on the unit simplex
+# ------------------------------------------------------------
+def direct_auc_objective(raw_w, z_matrix, y_true):
+    # Softmax parameterization guarantees w_i >= 0 and sum(w) = 1
+    w_norm = np.exp(raw_w - np.max(raw_w))
+    w_norm = w_norm / np.sum(w_norm)
+    z_blend = np.dot(z_matrix, w_norm)
+    return -roc_auc_score(y_true, z_blend)
+
+opt_auc = minimize(
+    direct_auc_objective,
+    np.zeros(N_MODELS),
+    args=(oof_logits, y_true_vals),
+    method='Nelder-Mead',
+    options={'maxiter': 1000, 'xatol': 1e-5, 'fatol': 1e-6}
+)
+w_raw_auc = np.exp(opt_auc.x - np.max(opt_auc.x))
+w_direct_auc = w_raw_auc / np.sum(w_raw_auc)
+auc_direct = roc_auc_score(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_direct_auc))))
+loss_direct = log_loss(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_direct_auc))))
+print(f"3. Direct AUC Maximizer        : OOF AUC = {auc_direct:.5f} | Log-Loss = {loss_direct:.5f}")
+
+
+# ------------------------------------------------------------
+# 4. CONVEX OPTIMIZER C: Entropy-Regularized Simplex Blending
+# Adds maximum entropy penalty -tau * sum(w * log(w)) to prevent single-model overfitting
+# ------------------------------------------------------------
+def entropy_regularized_objective(weights, z_matrix, y_true, tau=0.005):
+    z_blend = np.dot(z_matrix, weights)
+    p_blend = np.clip(1.0 / (1.0 + np.exp(-z_blend)), 1e-7, 1.0 - 1e-7)
+    entropy = -np.sum(weights * np.log(weights + 1e-12))
+    return log_loss(y_true, p_blend) - tau * entropy
+
+opt_entropy = minimize(
+    entropy_regularized_objective,
+    w_init,
+    args=(oof_logits, y_true_vals, 0.005),
+    method='SLSQP',
+    bounds=bounds_simplex,
+    constraints=constraints_simplex,
+    options={'maxiter': 500, 'ftol': 1e-9}
+)
+w_entropy = opt_entropy.x / np.sum(opt_entropy.x)
+auc_entropy = roc_auc_score(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_entropy))))
+loss_entropy = log_loss(y_true_vals, 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_entropy))))
+print(f"4. Entropy-Regularized Simplex : OOF AUC = {auc_entropy:.5f} | Log-Loss = {loss_entropy:.5f}")
 
 
 # ============================================================
-# 5. PHASE 3: FIT DOMAIN-ADAPTED STUDENT SUPER-LEARNER
+# 6. LEADERBOARD OF OPTIMIZATION FORMULATIONS
 # ============================================================
+
+optimizer_comparison = pd.DataFrame([
+    {"Optimizer Formulation": "Direct Simplex AUC Maximizer", "OOF ROC-AUC": auc_direct, "Log-Loss": loss_direct, "Weights": w_direct_auc},
+    {"Optimizer Formulation": "Simplex Log-Loss (SLSQP)", "OOF ROC-AUC": auc_slsqp, "Log-Loss": loss_slsqp, "Weights": w_slsqp},
+    {"Optimizer Formulation": "Entropy-Regularized Simplex", "OOF ROC-AUC": auc_entropy, "Log-Loss": loss_entropy, "Weights": w_entropy},
+    {"Optimizer Formulation": "Classic OLS-NNLS Baseline", "OOF ROC-AUC": auc_classic, "Log-Loss": loss_classic, "Weights": w_classic}
+]).sort_values(by="OOF ROC-AUC", ascending=False).reset_index(drop=True)
 
 print("\n============================================")
-print("PHASE 3: TRAINING DOMAIN-ADAPTED STUDENT SUPER-LEARNER")
+print("CONVEX OPTIMIZATION COMPARISON")
 print("============================================")
+print(optimizer_comparison[["Optimizer Formulation", "OOF ROC-AUC", "Log-Loss"]].to_string(index=False))
 
-skf_aug = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+# Automatically select the winning convex optimizer
+winning_optimizer_name = optimizer_comparison.iloc[0]["Optimizer Formulation"]
+winning_weights = optimizer_comparison.iloc[0]["Weights"]
+winning_auc = optimizer_comparison.iloc[0]["OOF ROC-AUC"]
 
-oof_probs_student = np.zeros((len(X_augmented), N_MODELS))
-test_fold_preds_student = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+print(f"\n🏆 WINNING CONVEX FORMULATION: '{winning_optimizer_name}' (OOF AUC: {winning_auc:.5f})")
 
-for fold, (train_idx, val_idx) in enumerate(skf_aug.split(X_augmented, y_augmented)):
-    X_tr_f, y_tr_f = X_augmented.iloc[train_idx], y_augmented.iloc[train_idx]
-    X_va_f, y_va_f = X_augmented.iloc[val_idx], y_augmented.iloc[val_idx]
-
-    models_dict = get_base_model_dict(seed=42 + fold * 10)
-
-    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline([("preprocessor", preprocessor), ("model", model_obj)])
-        pipe.fit(X_tr_f, y_tr_f)
-        
-        oof_probs_student[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_preds_student[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
-
-    print(f"Student Fold {fold + 1}/{N_SPLITS} Complete.")
-
-# Student NNLS Optimization
-oof_logits_student = np.zeros_like(oof_probs_student)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probs_student[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits_student[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-nnls_student = LinearRegression(positive=True, fit_intercept=True).fit(oof_logits_student, y_augmented)
-norm_weights_student = nnls_student.coef_ / np.sum(nnls_student.coef_) if np.sum(nnls_student.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
-
-print("\nLearned Student Meta-Weights:")
-weight_summary = pd.DataFrame({
+# Print learned weights allocation
+weights_df = pd.DataFrame({
     "Base Model": model_names,
-    "Raw Weight": nnls_student.coef_,
-    "Normalized %": norm_weights_student * 100
-}).sort_values(by="Normalized %", ascending=False).reset_index(drop=True)
-print(weight_summary.to_string(index=False))
+    "Optimal Simplex Weight": winning_weights,
+    "Allocation %": winning_weights * 100
+}).sort_values(by="Allocation %", ascending=False).reset_index(drop=True)
 
-# Student Test Logits
-avg_test_probs_student = test_fold_preds_student.mean(axis=2)
-test_logits_student = np.zeros_like(avg_test_probs_student)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs_student[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits_student[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-student_test_logits = np.dot(test_logits_student, norm_weights_student)
-
-# ------------------------------------------------------------
-# 6. TEACHER-STUDENT LOG-ODDS BLEND (80% Student + 20% Teacher Anchor)
-# ------------------------------------------------------------
-final_master_logits = 0.80 * student_test_logits + 0.20 * teacher_test_logits
-final_probabilities = 1.0 / (1.0 + np.exp(-final_master_logits))
+print("\nOptimal Weight Allocation on Unit Simplex:")
+print(weights_df.to_string(index=False))
 
 
 # ============================================================
-# 7. VALIDATE & SAVE SUBMISSION FILE
+# 7. INFERENCE ON TEST SET
+# ============================================================
+
+print("\nGenerating final test predictions via winning convex optimization...")
+
+final_test_logits = np.dot(test_logits, winning_weights)
+final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
+
+
+# ============================================================
+# 8. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -369,7 +413,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp92_pseudolabeled_sem_superlearner.csv"
+output_file = "submission_exp93_simplex_convex_optimization.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -380,11 +424,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 8. SUMMARY & BENCHMARKS
+# 9. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 92 COMPLETE")
+print("EXPERIMENT 93 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -398,10 +442,8 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 91 50-Fold Multi-Seed Ultra     : 0.65969")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
-print(f"Exp 92 Semi-Supervised Super-Learner: Domain Adapted ({n_total_pseudo} Pseudo-Labels)")
+print("Exp 68 Classic NNLS Baseline       : 0.66054")
+print(f"Exp 93 Simplex Convex Optimization : OOF Val = {winning_auc:.5f} ({winning_optimizer_name})")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
