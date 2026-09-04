@@ -1,11 +1,13 @@
 # ============================================================
-# EXPERIMENT 84 — ADAPTIVE CONTEXT-AWARE SEM SUPER-LEARNER
-# (GENUINE MANIFOLD DIVERSITY + DISAGREEMENT STACKING + CARUANA DP)
+# EXPERIMENT 80-84 MASTER SUITE — DIVERSE MANIFOLD SUPER-LAB
+# (EXP 80: DIVERSE MODELS | EXP 81: REPRESENTATIONS | EXP 82: DISAGREEMENT
+#  EXP 83: SEM CONTEXT STACKING | EXP 84: CARUANA DP ENSEMBLE)
 # ============================================================
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from scipy.stats import rankdata
 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -21,13 +23,13 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 84")
-print("ADAPTIVE CONTEXT-AWARE SEM SUPER-LEARNER")
+print("EXPERIMENT 80 - 84 MASTER LAB")
+print("DIVERSE MANIFOLDS + CONTEXT STACKING + CARUANA DP")
 print("============================================")
 
 
 # ============================================================
-# 1. DIRECTORY PATHS
+# 1. DIRECTORY PATHS & DATA LOADING
 # ============================================================
 
 CURRENT_DIR = Path.cwd()
@@ -36,51 +38,38 @@ DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
-
-# ============================================================
-# 2. FEATURE EXTRACTION & MISSINGNESS FINGERPRINTING
-# ============================================================
-
+train_raw = pd.read_csv(DATA_DIR / "train.csv")
+test_raw = pd.read_csv(DATA_DIR / "test.csv")
+test_ids = test_raw["anonymised_id"].copy()
 target = "employed_status"
-GLOBAL_PRIOR = 0.31694
+
+
+# ============================================================
+# 2. FEATURE EXTRACTION & PURE SEM MANIFOLD
+# ============================================================
 
 def parse_matric_band(val):
-    """Converts matric percentage strings into continuous numeric marks."""
-    if pd.isna(val):
-        return np.nan
+    if pd.isna(val): return np.nan
     s = str(val).replace("%", "").strip()
     if "-" in s:
         parts = s.split("-")
-        try:
-            return (float(parts[0]) + float(parts[1])) / 2.0
-        except Exception:
-            return np.nan
+        try: return (float(parts[0]) + float(parts[1])) / 2.0
+        except: return np.nan
     elif "<" in s:
-        try:
-            return float(s.replace("<", "").strip()) / 2.0
-        except Exception:
-            return np.nan
+        try: return float(s.replace("<", "").strip()) / 2.0
+        except: return np.nan
     elif ">" in s:
-        try:
-            return float(s.replace(">", "").strip()) + 5.0
-        except Exception:
-            return np.nan
+        try: return float(s.replace(">", "").strip()) + 5.0
+        except: return np.nan
     else:
-        try:
-            return float(s)
-        except Exception:
-            return np.nan
+        try: return float(s)
+        except: return np.nan
 
 
-def extract_disentangled_sem_features(train_df, test_df):
-    """
-    Extracts features, prevents identical profile collapse via missingness
-    fingerprinting, and extracts SEM Latent Factor blocks.
-    """
+def extract_features_and_sem(train_df, test_df):
     tr = train_df.copy()
     te = test_df.copy()
 
-    # Clean target
     tr[target] = pd.to_numeric(tr[target], errors="coerce")
     tr = tr.dropna(subset=[target]).copy()
     tr[target] = tr[target].astype(int)
@@ -96,31 +85,15 @@ def extract_disentangled_sem_features(train_df, test_df):
             df["survey_dayofyear"] = df["survey_date"].dt.dayofyear
             df.drop(columns=["survey_date"], inplace=True)
 
-        # 1. Longitudinal & Lag Semantics
         df["is_first_time"] = df["employed_lag"].isna().astype(float)
         df["employed_lag_num"] = df["employed_lag"].fillna(-1.0).astype(float)
-        
-        tenure_raw = pd.to_numeric(df.get("tenure_lag", 0), errors="coerce").fillna(0).clip(lower=0)
-        df["tenure_lag_log"] = np.log1p(tenure_raw)
-        
-        days_raw = pd.to_numeric(df.get("days_since_last_obs", 0), errors="coerce").fillna(0).clip(lower=0)
-        df["days_since_obs_log"] = np.log1p(days_raw)
+        df["tenure_lag_log"] = np.log1p(pd.to_numeric(df.get("tenure_lag", 0), errors="coerce").fillna(0).clip(lower=0))
+        df["days_since_obs_log"] = np.log1p(pd.to_numeric(df.get("days_since_last_obs", 0), errors="coerce").fillna(0).clip(lower=0))
 
-        # 2. Missingness Fingerprinting (Distinguishes between first-time entrants)
-        df["missing_profile_depth"] = (
-            df["employed_lag"].isna().astype(float) +
-            df["days_since_last_obs"].isna().astype(float) +
-            df.get("institution_type", pd.Series(np.nan, index=df.index)).isna().astype(float) +
-            df.get("seta", pd.Series(np.nan, index=df.index)).isna().astype(float) +
-            df.get("matric_mathpure", pd.Series(np.nan, index=df.index)).isna().astype(float)
-        )
-
-        # 3. Matric Continuous Marks
         for m in ["matric_englishhome", "matric_englishadd", "matric_mathpure", "matric_physicalscience", "matric_mathlit"]:
             if m in df.columns:
                 df[f"{m}_score"] = df[m].apply(parse_matric_band).fillna(-1.0)
 
-        # 4. Socio-Economic & Readiness
         df["school_quintile_num"] = pd.to_numeric(df.get("school_quintile", 0), errors="coerce").fillna(0.0)
         df["work_readiness_num"] = pd.to_numeric(df.get("work_readiness_score", 0.5), errors="coerce").fillna(0.5)
         df["age_clean"] = pd.to_numeric(df.get("age", 22), errors="coerce").fillna(22.0).clip(18, 35)
@@ -133,27 +106,23 @@ def extract_disentangled_sem_features(train_df, test_df):
                 if df[col].notna().sum() > 0 and converted.notna().sum() > 0.6 * df[col].notna().sum():
                     df[col] = converted
 
-    # ------------------------------------------------------------
-    # 5. SEM LATENT FACTOR EXTRACTION
-    # ------------------------------------------------------------
+    # Extract 8 SEM Latent Factors
     acad_cols = [c for c in tr.columns if "_score" in c]
-    labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time", "missing_profile_depth"]
+    labour_cols = ["employed_lag_num", "tenure_lag_log", "days_since_obs_log", "is_first_time"]
     socio_cols = ["school_quintile_num", "work_readiness_num", "age_clean"]
 
     imp = SimpleImputer(strategy="median")
     scl = StandardScaler()
 
-    # Block A: Academic Factor Analysis
     if len(acad_cols) > 0:
         fa_acad = FactorAnalysis(n_components=2, random_state=42)
         X_ac_tr = scl.fit_transform(imp.fit_transform(tr[acad_cols]))
         X_ac_te = scl.transform(imp.transform(te[acad_cols]))
-        tr["sem_academic_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
-        tr["sem_academic_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
-        te["sem_academic_1"] = fa_acad.transform(X_ac_te)[:, 0]
-        te["sem_academic_2"] = fa_acad.transform(X_ac_te)[:, 1]
+        tr["sem_acad_1"] = fa_acad.fit_transform(X_ac_tr)[:, 0]
+        tr["sem_acad_2"] = fa_acad.fit_transform(X_ac_tr)[:, 1]
+        te["sem_acad_1"] = fa_acad.transform(X_ac_te)[:, 0]
+        te["sem_acad_2"] = fa_acad.transform(X_ac_te)[:, 1]
 
-    # Block B: Labour Momentum Factor Analysis
     fa_lab = FactorAnalysis(n_components=2, random_state=42)
     X_lb_tr = scl.fit_transform(imp.fit_transform(tr[labour_cols]))
     X_lb_te = scl.transform(imp.transform(te[labour_cols]))
@@ -162,7 +131,6 @@ def extract_disentangled_sem_features(train_df, test_df):
     te["sem_labour_1"] = fa_lab.transform(X_lb_te)[:, 0]
     te["sem_labour_2"] = fa_lab.transform(X_lb_te)[:, 1]
 
-    # Block C: Socio-Economic Factor Analysis
     fa_soc = FactorAnalysis(n_components=2, random_state=42)
     X_sc_tr = scl.fit_transform(imp.fit_transform(tr[socio_cols]))
     X_sc_te = scl.transform(imp.transform(te[socio_cols]))
@@ -171,7 +139,6 @@ def extract_disentangled_sem_features(train_df, test_df):
     te["sem_socio_1"] = fa_soc.transform(X_sc_te)[:, 0]
     te["sem_socio_2"] = fa_soc.transform(X_sc_te)[:, 1]
 
-    # Block D: Supervised PLS Direct Covariance Path
     all_num = acad_cols + labour_cols + socio_cols
     pls = PLSRegression(n_components=2)
     X_pls_tr = imp.fit_transform(tr[all_num])
@@ -185,82 +152,71 @@ def extract_disentangled_sem_features(train_df, test_df):
     return tr, te
 
 
-def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    """Builds standard or quantile-normalized preprocessor."""
-    transformers = []
+train_sem, test_sem = extract_features_and_sem(train_raw, test_raw)
+common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
 
-    if len(numerical_cols) > 0:
-        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
-        numeric_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", scaler)
-        ])
-        transformers.append(("num", numeric_transformer, numerical_cols))
+y = train_sem[target].reset_index(drop=True)
+X = train_sem[common_cols].reset_index(drop=True)
+X_test = test_sem[common_cols].reset_index(drop=True)
 
-    if len(categorical_cols) > 0:
-        categorical_transformer = Pipeline(steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-        ])
-        transformers.append(("cat", categorical_transformer, categorical_cols))
+# Drop high-cardinality categoricals (>100)
+cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+high_card = [c for c in cat_cols if X[c].nunique(dropna=True) > 100]
+if high_card:
+    X.drop(columns=high_card, inplace=True)
+    X_test.drop(columns=high_card, inplace=True)
 
-    return ColumnTransformer(transformers=transformers)
+cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+sem_factor_cols = [c for c in num_cols if "sem_" in c or "pls_path" in c]
+
+print(f"Dataset Prepared: {len(X)} observations | {len(num_cols)} numerical, {len(cat_cols)} categorical")
 
 
 # ============================================================
-# 3. GENUINE DIVERSE MANIFOLD ESTIMATORS (EXP 80)
+# 3. EXP 80: GENUINE DIVERSE MANIFOLD BASE MODELS
 # ============================================================
 
-# Wrapper for PLS probability classification
-class PLSProbabilityClassifier:
+class PLSProbClassifier:
+    """Supervised PLS classifier with calibrated logistic transfer."""
     def __init__(self, n_components=3):
         self.pls = PLSRegression(n_components=n_components)
 
-    def fit(self, X, y):
-        self.pls.fit(X, y)
+    def fit(self, X_mat, y_vec):
+        self.pls.fit(X_mat, y_vec)
         return self
 
-    def predict_proba(self, X):
-        preds = self.pls.predict(X).ravel()
-        # Calibrate via sigmoid
-        probs_1 = np.clip(1.0 / (1.0 + np.exp(-preds * 3.0)), 1e-6, 1.0 - 1e-6)
-        return np.vstack([1.0 - probs_1, probs_1]).T
+    def predict_proba(self, X_mat):
+        preds = self.pls.predict(X_mat).ravel()
+        p1 = np.clip(1.0 / (1.0 + np.exp(-preds * 3.0)), 1e-6, 1.0 - 1e-6)
+        return np.vstack([1.0 - p1, p1]).T
 
 
-def get_diverse_manifold_models(seed=42):
-    """
-    Constructs 6 genuinely diverse model paradigms:
-    1. Generative LDA (Shrinkage Auto)
-    2. Supervised PLS Direct Classifier
-    3. Quantile-Gaussian ElasticNet
-    4. Standard SAGA ElasticNet
-    5. Deep Hierarchical ReLU MLP
-    6. Smooth Continuous Tanh MLP
-    """
+def get_exp80_diverse_models(seed=42):
     return {
-        "Generative_LDA_Shrinkage": (
+        "Manifold_1_LDA_Shrinkage": (
             LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto"),
-            False
+            True  # Quantile-Gaussian space
         ),
-        "Supervised_PLS_Classifier": (
-            PLSProbabilityClassifier(n_components=3),
-            False
+        "Manifold_2_Supervised_PLS": (
+            PLSProbClassifier(n_components=3),
+            False # Standard space
         ),
-        "Quantile_ElasticNet_SAGA": (
+        "Manifold_3_Quantile_ElasticNet": (
             LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
             True
         ),
-        "Standard_ElasticNet_SAGA": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
+        "Manifold_4_Standard_LogReg_L2": (
+            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed),
             False
         ),
-        "Deep_ReLU_MLP_128_64": (
+        "Manifold_5_Deep_ReLU_MLP": (
             MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
                           batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
                           n_iter_no_change=25, validation_fraction=0.15, random_state=seed),
             False
         ),
-        "Smooth_Tanh_MLP_64_32": (
+        "Manifold_6_Smooth_Tanh_MLP": (
             MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
                           batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
                           n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 50),
@@ -270,124 +226,138 @@ def get_diverse_manifold_models(seed=42):
 
 
 # ============================================================
-# 4. LOAD & PREPARE DATASET
+# 4. 5-FOLD OOF EXTRACTION
 # ============================================================
 
 print("\n============================================")
-print("EXTRACTING DISENTANGLED SEM LATENT MANIFOLD")
-print("============================================")
-
-train_raw = pd.read_csv(DATA_DIR / "train.csv")
-test_raw = pd.read_csv(DATA_DIR / "test.csv")
-test_ids = test_raw["anonymised_id"].copy()
-
-train_sem, test_sem = extract_disentangled_sem_features(train_raw, test_raw)
-
-common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
-
-y = train_sem[target].reset_index(drop=True)
-X = train_sem[common_cols].reset_index(drop=True)
-X_test = test_sem[common_cols].reset_index(drop=True)
-
-# Drop high-cardinality categorical (>100)
-categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
-high_cardinality = [c for c in categorical_features if X[c].nunique(dropna=True) > 100]
-if high_cardinality:
-    X = X.drop(columns=high_cardinality)
-    X_test = X_test.drop(columns=high_cardinality)
-
-categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
-numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
-
-sem_factor_cols = [c for c in numerical_features if "sem_" in c or "pls_path" in c]
-
-print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)} numerical (incl. {len(sem_factor_cols)} SEM Factors), {len(categorical_features)} categorical")
-
-
-# ============================================================
-# 5. 5-FOLD OOF EXTRACTION ACROSS DIVERSE MANIFOLDS
-# ============================================================
-
-print("\n============================================")
-print("GENERATING 5-FOLD OOF PREDICTIONS ACROSS DIVERSE MANIFOLDS")
+print("RUNNING 5-FOLD CROSS VALIDATION (EXP 80 DIVERSE MANIFOLDS)")
 print("============================================")
 
 N_SPLITS = 5
 skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-model_names = list(get_diverse_manifold_models(seed=42).keys())
+model_names = list(get_exp80_diverse_models(seed=42).keys())
 N_MODELS = len(model_names)
 
-oof_probabilities = np.zeros((len(X), N_MODELS))
-test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+oof_probs = np.zeros((len(X), N_MODELS))
+test_fold_preds = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
 for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
     X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
-    models_dict = get_diverse_manifold_models(seed=42 + fold * 10)
+    fold_models = get_exp80_diverse_models(seed=42 + fold * 10)
 
-    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline([
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
+    for m_idx, (m_name, (m_obj, use_q)) in enumerate(fold_models.items()):
+        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_q else StandardScaler()
+        preproc = ColumnTransformer([
+            ("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("scl", scaler)]), num_cols),
+            ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), cat_cols)
         ])
+        pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
         pipe.fit(X_tr_f, y_tr_f)
-        
-        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-    print(f"Fold {fold + 1}/{N_SPLITS} Complete.")
+        oof_probs[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+        test_fold_preds[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
+print("\n--- Exp 80: Diverse Manifold OOF Scores ---")
+for m_idx, name in enumerate(model_names):
+    score = roc_auc_score(y, oof_probs[:, m_idx])
+    print(f" -> {name:<32}: OOF ROC-AUC = {score:.5f}")
 
-# Individual Manifold OOF Scores
-print("\n--- Diverse Manifold OOF ROC-AUC Scores ---")
-for m_idx, m_name in enumerate(model_names):
-    auc = roc_auc_score(y, oof_probabilities[:, m_idx])
-    print(f"Manifold {m_idx + 1:02d} ({m_name:<28}): OOF AUC = {auc:.5f}")
+avg_test_probs = test_fold_preds.mean(axis=2)
 
 
 # ============================================================
-# 6. ADAPTIVE CONTEXT-AWARE STACKING (EXP 82 & 83)
+# 5. EXP 81: PROBABILITY vs LOGIT vs RANK STACKING
 # ============================================================
 
 print("\n============================================")
-print("BUILDING ADAPTIVE CONTEXT-AWARE META-STACK")
+print("EXP 81: PROBABILITY vs LOGIT vs RANK STACKING")
 print("============================================")
 
-# Convert OOF probabilities to Logit Space
-oof_logits = np.zeros_like(oof_probabilities)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+# 1. Probability Representation
+nnls_p = LinearRegression(positive=True, fit_intercept=True).fit(oof_probs, y)
+w_p = nnls_p.coef_ / np.sum(nnls_p.coef_) if np.sum(nnls_p.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
+oof_stack_p = np.dot(oof_probs, w_p)
+auc_p = roc_auc_score(y, oof_stack_p)
 
-# Compute Disagreement / Uncertainty Spread Feature across Models
-oof_disagreement_std = np.std(oof_logits, axis=1, keepdims=True)
+# 2. Logit Representation
+oof_logits = np.zeros_like(oof_probs)
+test_logits = np.zeros_like(avg_test_probs)
+for m in range(N_MODELS):
+    p_cl = np.clip(oof_probs[:, m], 1e-6, 1.0 - 1e-6)
+    oof_logits[:, m] = np.log(p_cl / (1.0 - p_cl))
+    p_te_cl = np.clip(avg_test_probs[:, m], 1e-6, 1.0 - 1e-6)
+    test_logits[:, m] = np.log(p_te_cl / (1.0 - p_te_cl))
 
-# Build Context-Aware Meta-Features Matrix:
-# [6 Model Logits] + [1 Disagreement Spread] + [8 SEM Latent Factor Context Vectors]
-sem_factors_matrix_tr = X[sem_factor_cols].to_numpy()
-oof_meta_features = np.hstack([oof_logits, oof_disagreement_std, sem_factors_matrix_tr])
+nnls_z = LinearRegression(positive=True, fit_intercept=True).fit(oof_logits, y)
+w_z = nnls_z.coef_ / np.sum(nnls_z.coef_) if np.sum(nnls_z.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
+oof_stack_z = 1.0 / (1.0 + np.exp(-np.dot(oof_logits, w_z)))
+auc_z = roc_auc_score(y, oof_stack_z)
 
-print(f"Context-Aware Meta-Feature Matrix Shape: {oof_meta_features.shape}")
+# 3. Rank Representation
+oof_ranks = np.zeros_like(oof_probs)
+for m in range(N_MODELS):
+    oof_ranks[:, m] = rankdata(oof_probs[:, m]) / len(oof_probs)
 
-# Fit Context-Aware Super-Learner (Non-Negative Constrained on Predictions + Regularized SEM Context)
-adaptive_meta_learner = LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42)
-adaptive_meta_learner.fit(oof_meta_features, y)
+nnls_r = LinearRegression(positive=True, fit_intercept=True).fit(oof_ranks, y)
+w_r = nnls_r.coef_ / np.sum(nnls_r.coef_) if np.sum(nnls_r.coef_) > 0 else np.ones(N_MODELS)/N_MODELS
+oof_stack_r = np.dot(oof_ranks, w_r)
+auc_r = roc_auc_score(y, oof_stack_r)
 
-oof_adaptive_probs = adaptive_meta_learner.predict_proba(oof_meta_features)[:, 1]
-adaptive_oof_auc = roc_auc_score(y, oof_adaptive_probs)
-
-print(f"🏆 Adaptive Context-Aware Super-Learner OOF ROC-AUC: {adaptive_oof_auc:.5f}")
+print(f" -> 1. Probability Stacking OOF AUC : {auc_p:.5f}")
+print(f" -> 2. Log-Odds Logit Stacking OOF : {auc_z:.5f} (Optimal)")
+print(f" -> 3. Rank Stacking OOF AUC        : {auc_r:.5f}")
 
 
 # ============================================================
-# 7. CARUANA DYNAMIC PROGRAMMING ENSEMBLE SELECTION (EXP 84)
+# 6. EXP 82: ADAPTIVE DISAGREEMENT & UNCERTAINTY STACKING
 # ============================================================
 
 print("\n============================================")
-print("RUNNING CARUANA DP ENSEMBLE SELECTION OVER DIVERSE STACK")
+print("EXP 82: ADAPTIVE DISAGREEMENT STACKING")
+print("============================================")
+
+oof_std = np.std(oof_logits, axis=1, keepdims=True)
+oof_range = (np.max(oof_logits, axis=1) - np.min(oof_logits, axis=1)).reshape(-1, 1)
+oof_meta_exp82 = np.hstack([oof_logits, oof_std, oof_range])
+
+meta_exp82 = LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42)
+meta_exp82.fit(oof_meta_exp82, y)
+oof_probs_exp82 = meta_exp82.predict_proba(oof_meta_exp82)[:, 1]
+auc_exp82 = roc_auc_score(y, oof_probs_exp82)
+
+print(f" -> Exp 82 Disagreement Stack OOF AUC: {auc_exp82:.5f}")
+
+
+# ============================================================
+# 7. EXP 83: SUPERVISED SEM CONTEXT-AWARE STACKING
+# ============================================================
+
+print("\n============================================")
+print("EXP 83: SUPERVISED SEM CONTEXT-AWARE STACKING")
+print("============================================")
+
+sem_context_tr = X[sem_factor_cols].to_numpy()
+sem_context_te = X_test[sem_factor_cols].to_numpy()
+
+# Combine Model Logits + Disagreement + 8 SEM Latent Factor Vectors
+oof_meta_exp83 = np.hstack([oof_logits, oof_std, sem_context_tr])
+meta_exp83 = LogisticRegression(C=0.15, penalty="l2", solver="lbfgs", max_iter=1000, random_state=42)
+meta_exp83.fit(oof_meta_exp83, y)
+oof_probs_exp83 = meta_exp83.predict_proba(oof_meta_exp83)[:, 1]
+auc_exp83 = roc_auc_score(y, oof_probs_exp83)
+
+print(f" -> Exp 83 SEM Context Stack OOF AUC: {auc_exp83:.5f}")
+
+
+# ============================================================
+# 8. EXP 84: CARUANA DYNAMIC PROGRAMMING OVER DIVERSE ENSEMBLE
+# ============================================================
+
+print("\n============================================")
+print("EXP 84: CARUANA DYNAMIC PROGRAMMING SELECTION")
 print("============================================")
 
 def caruana_dp_selection(val_preds_matrix, y_true, n_iterations=150):
@@ -413,59 +383,84 @@ def caruana_dp_selection(val_preds_matrix, y_true, n_iterations=150):
     optimal_weights = counts / n_iterations
     return optimal_weights, best_scores[-1]
 
-# Run DP selection on the diverse manifold pool + adaptive stack
-all_candidate_preds_pool = np.hstack([oof_probabilities, oof_adaptive_probs.reshape(-1, 1)])
-pool_names = model_names + ["Adaptive_Context_Stacker"]
+# Pool: 6 Base Diverse Models + Exp 81 Logit Stack + Exp 82 Disagreement Stack + Exp 83 Context Stack
+candidate_pool_matrix = np.hstack([
+    oof_probs,
+    oof_stack_z.reshape(-1, 1),
+    oof_probs_exp82.reshape(-1, 1),
+    oof_probs_exp83.reshape(-1, 1)
+])
 
-dp_weights, dp_best_auc = caruana_dp_selection(all_candidate_preds_pool, y.to_numpy(), n_iterations=150)
+candidate_pool_names = model_names + [
+    "Exp81_Logit_Stack",
+    "Exp82_Disagreement_Stack",
+    "Exp83_SEM_Context_Stack"
+]
+
+dp_weights, auc_exp84 = caruana_dp_selection(candidate_pool_matrix, y.to_numpy(), n_iterations=150)
 
 dp_summary = []
-for p_idx, p_name in enumerate(pool_names):
+for p_idx, p_name in enumerate(candidate_pool_names):
     w = dp_weights[p_idx]
     if w > 0:
         dp_summary.append({"Ensemble Candidate": p_name, "DP Optimal Weight": f"{w * 100:.2f}%"})
 
-dp_df = pd.DataFrame(dp_summary).sort_values(by="DP Optimal Weight", ascending=False).reset_index(drop=True)
-print(dp_df.to_string(index=False))
-print(f"\n🏆 Final Exp 84 Dynamic Programming Optimized OOF AUC: {dp_best_auc:.5f}")
+print(pd.DataFrame(dp_summary).sort_values(by="DP Optimal Weight", ascending=False).to_string(index=False))
+print(f"\n🏆 Exp 84 Dynamic Programming Optimized OOF AUC: {auc_exp84:.5f}")
 
 
 # ============================================================
-# 8. TEST PREDICTION INFERENCE
+# 9. BENCHMARK SUMMARY & TEST PREDICTION GENERATION
 # ============================================================
 
-print("\nGenerating final test predictions via Exp 84 Master Engine...")
+print("\n============================================")
+print("EXPERIMENTS 80 - 84 BENCHMARK SUMMARY")
+print("============================================")
+summary_table = pd.DataFrame([
+    {"Experiment": "Exp 80 (Best Base Model)", "OOF ROC-AUC": np.max([roc_auc_score(y, oof_probs[:, i]) for i in range(N_MODELS)])},
+    {"Experiment": "Exp 81 (Logit NNLS Stacking)", "OOF ROC-AUC": auc_z},
+    {"Experiment": "Exp 82 (Disagreement Features)", "OOF ROC-AUC": auc_exp82},
+    {"Experiment": "Exp 83 (SEM Context Stacking)", "OOF ROC-AUC": auc_exp83},
+    {"Experiment": "Exp 84 (Caruana DP Optimization)", "OOF ROC-AUC": auc_exp84}
+]).sort_values(by="OOF ROC-AUC", ascending=False).reset_index(drop=True)
 
-# Average 5-fold test probabilities per manifold model
-avg_test_probs = test_fold_predictions.mean(axis=2)
-test_logits = np.zeros_like(avg_test_probs)
+print(summary_table.to_string(index=False))
 
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+# --- Compute Test Predictions for All Pool Candidates ---
+test_std = np.std(test_logits, axis=1, keepdims=True)
+test_range = (np.max(test_logits, axis=1) - np.min(test_logits, axis=1)).reshape(-1, 1)
 
-# Compute Adaptive Meta-Learner Test Predictions
-test_disagreement_std = np.std(test_logits, axis=1, keepdims=True)
-sem_factors_matrix_te = X_test[sem_factor_cols].to_numpy()
-test_meta_features = np.hstack([test_logits, test_disagreement_std, sem_factors_matrix_te])
+# Exp 81 Test Predictions
+test_pred_exp81 = 1.0 / (1.0 + np.exp(-np.dot(test_logits, w_z)))
 
-test_adaptive_probs = adaptive_meta_learner.predict_proba(test_meta_features)[:, 1]
+# Exp 82 Test Predictions
+test_meta_exp82 = np.hstack([test_logits, test_std, test_range])
+test_pred_exp82 = meta_exp82.predict_proba(test_meta_exp82)[:, 1]
 
-# Combine all candidates using Dynamic Programming weights
-all_test_candidates_matrix = np.hstack([avg_test_probs, test_adaptive_probs.reshape(-1, 1)])
+# Exp 83 Test Predictions
+test_meta_exp83 = np.hstack([test_logits, test_std, sem_context_te])
+test_pred_exp83 = meta_exp83.predict_proba(test_meta_exp83)[:, 1]
 
-# Convert to logit space and apply DP weights for smooth calibrated output
-test_cand_logits = np.zeros_like(all_test_candidates_matrix)
-for c_idx in range(all_test_candidates_matrix.shape[1]):
-    p_cl = np.clip(all_test_candidates_matrix[:, c_idx], 1e-6, 1.0 - 1e-6)
-    test_cand_logits[:, c_idx] = np.log(p_cl / (1.0 - p_cl))
+# Construct Complete Test Pool Matrix
+all_test_pool_matrix = np.hstack([
+    avg_test_probs,
+    test_pred_exp81.reshape(-1, 1),
+    test_pred_exp82.reshape(-1, 1),
+    test_pred_exp83.reshape(-1, 1)
+])
 
-final_master_logits = np.dot(test_cand_logits, dp_weights)
+# Convert Pool to Logit Space and apply Exp 84 Dynamic Programming Weights
+test_pool_logits = np.zeros_like(all_test_pool_matrix)
+for c in range(all_test_pool_matrix.shape[1]):
+    p_cl = np.clip(all_test_pool_matrix[:, c], 1e-6, 1.0 - 1e-6)
+    test_pool_logits[:, c] = np.log(p_cl / (1.0 - p_cl))
+
+final_master_logits = np.dot(test_pool_logits, dp_weights)
 final_probabilities = 1.0 / (1.0 + np.exp(-final_master_logits))
 
 
 # ============================================================
-# 9. VALIDATE & SAVE SUBMISSION FILE
+# 10. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -475,7 +470,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp84_adaptive_sem_superlearner.csv"
+output_file = "submission_exp80_84_master_champion.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -486,28 +481,20 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 10. SUMMARY & BENCHMARKS
+# 11. SUMMARY
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 84 COMPLETE")
+print("MASTER LAB COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
 
-print("\nPrediction summary (Checking variance expansion):")
+print("\nPrediction summary:")
 print(submission["employed_status"].describe())
 
 print("\nFirst 10 predictions:")
 print(submission.head(10))
-
-print("\n============================================")
-print("BENCHMARKS")
-print("============================================")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 71 Grand Master Super-Learner   : 0.66051")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Previous Best)")
-print(f"Exp 84 Adaptive Context-Aware Super : OOF Val = {dp_best_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
