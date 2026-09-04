@@ -1,6 +1,6 @@
 # ============================================================
-# EXPERIMENT 90 — UNIFIED NNLS CLUSTER-SEM GRAND TITAN
-# (SOFTMAX ARCHETYPE CLUSTERING + PURE SEM + NATURAL NNLS STACKING)
+# EXPERIMENT 91 — THE 50-FOLD MULTI-SEED NNLS ULTRA-TITAN
+# (10 SEEDS x 5 FOLDS = 50 FOLDS / 450 MODELS ON PURE EXP 68 CORE)
 # ============================================================
 
 import pandas as pd
@@ -13,7 +13,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.cluster import KMeans
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
@@ -21,8 +20,8 @@ from sklearn.metrics import roc_auc_score
 
 
 print("============================================")
-print("EXPERIMENT 90")
-print("UNIFIED NNLS CLUSTER-SEM GRAND TITAN")
+print("EXPERIMENT 91")
+print("THE 50-FOLD MULTI-SEED NNLS ULTRA-TITAN")
 print("============================================")
 
 
@@ -43,7 +42,7 @@ target = "employed_status"
 
 
 # ============================================================
-# 2. FEATURE EXTRACTION & PURE SEM MANIFOLD
+# 2. EXACT PROVEN 0.66054 FEATURE EXTRACTION
 # ============================================================
 
 def parse_matric_band(val):
@@ -152,12 +151,55 @@ def extract_pure_sem_features(train_df, test_df):
     return tr, te
 
 
+def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
+    transformers = []
+    if len(numerical_cols) > 0:
+        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
+        numeric_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", scaler)
+        ])
+        transformers.append(("num", numeric_transformer, numerical_cols))
+
+    if len(categorical_cols) > 0:
+        categorical_transformer = Pipeline(steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+        ])
+        transformers.append(("cat", categorical_transformer, categorical_cols))
+
+    return ColumnTransformer(transformers=transformers)
+
+
 # ============================================================
-# 3. LOAD DATASET & PREPARE MATRICES
+# 3. EXACT WINNING 9-MODEL BASE CANDIDATE SUITE
+# ============================================================
+
+def get_base_model_dict(seed=42):
+    """Returns the exact 9-model suite from Exp 68."""
+    return {
+        "LogReg_L2_C006": (LogisticRegression(C=0.06, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), False),
+        "LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), False),
+        "LogReg_L2_C010": (LogisticRegression(C=0.10, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), False),
+        "LogReg_ElasticNet_C008": (LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=seed), False),
+        "LogReg_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed), False),
+        "Quantile_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed), True),
+        "Quantile_LogReg_ElasticNet": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed), True),
+        "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
+                                           batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                                           n_iter_no_change=25, validation_fraction=0.15, random_state=seed), False),
+        "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                                         batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                                         n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 100), False)
+    }
+
+
+# ============================================================
+# 4. LOAD & PREPARE DATASET
 # ============================================================
 
 print("\n============================================")
-print("EXTRACTING PURE SEM LATENT MANIFOLD")
+print("EXTRACTING EXACT EXP 68 PURE SEM LATENT MANIFOLD")
 print("============================================")
 
 train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
@@ -178,205 +220,99 @@ if high_cardinality:
 categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
 numerical_features = X.select_dtypes(include=[np.number]).columns.tolist()
 
-sem_latent_cols = [c for c in numerical_features if "latent_" in c or "pls_" in c]
-
 print(f"Full dataset: {len(X)} observations | Features: {len(numerical_features)} numerical, {len(categorical_features)} categorical")
-print(f"SEM Latent Factors for Soft Clustering: {sem_latent_cols}")
 
 
 # ============================================================
-# 4. PREPROCESSOR & PROVEN BASE MODEL DEFINITIONS
-# ============================================================
-
-def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
-    transformers = []
-    if len(numerical_cols) > 0:
-        scaler = QuantileTransformer(output_distribution="normal", random_state=42) if use_quantile else StandardScaler()
-        transformers.append(("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("scl", scaler)]), numerical_cols))
-    if len(categorical_cols) > 0:
-        transformers.append(("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), categorical_cols))
-    return ColumnTransformer(transformers=transformers)
-
-
-def get_base_model_dict(seed=42):
-    """Returns the proven 8-model suite (ElasticNet + Multi-Scale MLPs)."""
-    return {
-        "Quantile_ElasticNet_C010": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
-            True
-        ),
-        "Quantile_ElasticNet_C008": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=seed),
-            True
-        ),
-        "Standard_ElasticNet_C010": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
-            False
-        ),
-        "Standard_LogReg_L2_C008": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed),
-            False
-        ),
-        "MLP_Deep_128_64": (
-            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 50),
-            False
-        ),
-        "MLP_Medium_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed),
-            False
-        ),
-        "MLP_Tanh_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 150),
-            False
-        ),
-        "Quantile_MLP_Medium_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 200),
-            True
-        )
-    }
-
-
-# ============================================================
-# 5. 5-FOLD IN-FOLD SOFTMAX CLUSTERING & OOF GENERATION
+# 5. 50-FOLD REPEATED NNLS TRAINING (10 SEEDS x 5 FOLDS)
 # ============================================================
 
 print("\n============================================")
-print("RUNNING 5-FOLD CV WITH SOFTMAX ARCHETYPE CLUSTERING (K=4)")
+print("RUNNING 50-FOLD MULTI-SEED NNLS OPTIMIZATION (10 SEEDS)")
 print("============================================")
 
+SEEDS = [42, 101, 777, 2024, 999, 1337, 555, 888, 314, 271]
 N_SPLITS = 5
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
 model_names = list(get_base_model_dict(seed=42).keys())
 N_MODELS = len(model_names)
 
-oof_probabilities = np.zeros((len(X), N_MODELS))
-test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+all_superlearner_test_logits = []
+all_seed_oof_scores = []
 
-def compute_softmax_cluster_memberships(distances):
-    """Converts cluster Euclidean distances into smooth Softmax probabilities."""
-    # Scale distances to prevent underflow
-    mean_d = np.mean(distances, axis=1, keepdims=True) + 1e-6
-    neg_scaled = -distances / mean_d
-    exp_d = np.exp(neg_scaled - np.max(neg_scaled, axis=1, keepdims=True))
-    return exp_d / np.sum(exp_d, axis=1, keepdims=True)
+for s_idx, cv_seed in enumerate(SEEDS):
+    print(f"\n--- Running Seed {cv_seed:<4} ({s_idx + 1}/{len(SEEDS)}) [Folds {s_idx*5 + 1} to {s_idx*5 + 5}] ---")
 
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=cv_seed)
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X.iloc[train_idx].copy(), y.iloc[train_idx].copy()
-    X_va_f, y_va_f = X.iloc[val_idx].copy(), y.iloc[val_idx].copy()
-    X_te_f = X_test.copy()
+    oof_probabilities = np.zeros((len(X), N_MODELS))
+    test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
-    # Fit K-Means on SEM Latent Space strictly in-fold (zero leakage)
-    kmeans = KMeans(n_clusters=4, random_state=42 + fold, n_init=10)
-    
-    tr_dists = kmeans.fit_transform(X_tr_f[sem_latent_cols])
-    va_dists = kmeans.transform(X_va_f[sem_latent_cols])
-    te_dists = kmeans.transform(X_te_f[sem_latent_cols])
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+        X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+        X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
-    # Convert to smooth Softmax archetype probabilities
-    tr_probs = compute_softmax_cluster_memberships(tr_dists)
-    va_probs = compute_softmax_cluster_memberships(va_dists)
-    te_probs = compute_softmax_cluster_memberships(te_dists)
+        models_dict = get_base_model_dict(seed=cv_seed + fold * 10)
 
-    for k in range(4):
-        X_tr_f[f"sem_archetype_prob_{k}"] = tr_probs[:, k]
-        X_va_f[f"sem_archetype_prob_{k}"] = va_probs[:, k]
-        X_te_f[f"sem_archetype_prob_{k}"] = te_probs[:, k]
+        for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
+            preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
+            pipe = Pipeline([
+                ("preprocessor", preprocessor),
+                ("model", model_obj)
+            ])
+            pipe.fit(X_tr_f, y_tr_f)
+            
+            oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+            test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-    num_cols_with_clusters = X_tr_f.select_dtypes(include=[np.number]).columns.tolist()
+    # Convert OOF to Logit Space
+    oof_logits = np.zeros_like(oof_probabilities)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
+        oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-    models_dict = get_base_model_dict(seed=42 + fold * 10)
+    # Fit NNLS Meta-Learner on this seed
+    nnls_meta = LinearRegression(positive=True, fit_intercept=True)
+    nnls_meta.fit(oof_logits, y)
 
-    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(num_cols_with_clusters, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline([
-            ("preprocessor", preprocessor),
-            ("model", model_obj)
-        ])
-        pipe.fit(X_tr_f, y_tr_f)
-        
-        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_te_f)[:, 1]
+    raw_weights = nnls_meta.coef_
+    sum_w = np.sum(raw_weights)
+    norm_weights = raw_weights / sum_w if sum_w > 0 else np.ones(N_MODELS) / N_MODELS
 
-    print(f"Fold {fold + 1}/{N_SPLITS} Complete.")
+    # Calculate this seed's OOF score
+    seed_oof_logits = np.dot(oof_logits, norm_weights)
+    seed_oof_auc = roc_auc_score(y, 1.0 / (1.0 + np.exp(-seed_oof_logits)))
+    all_seed_oof_scores.append(seed_oof_auc)
+    print(f"  🏆 Seed {cv_seed} Stacked OOF AUC = {seed_oof_auc:.5f}")
 
+    # Generate test logits for this seed
+    avg_test_probs = test_fold_predictions.mean(axis=2)
+    test_logits = np.zeros_like(avg_test_probs)
+    for m_idx in range(N_MODELS):
+        p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+        test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
 
-# Individual OOF Scores
-print("\n--- Individual Base Model OOF ROC-AUC Scores (With Soft Clustering) ---")
-for m_idx, m_name in enumerate(model_names):
-    auc = roc_auc_score(y, oof_probabilities[:, m_idx])
-    print(f"Model {m_idx + 1:02d} ({m_name:<30}): OOF AUC = {auc:.5f}")
+    seed_test_logits = np.dot(test_logits, norm_weights)
+    all_superlearner_test_logits.append(seed_test_logits)
 
 
 # ============================================================
-# 6. PURE NON-NEGATIVE LEAST SQUARES (NNLS) META-OPTIMIZATION
+# 6. INTEGRATE 50-FOLD SUPER-LEARNER TEST PREDICTIONS
 # ============================================================
 
 print("\n============================================")
-print("SOLVING PURE NON-NEGATIVE CONSTRAINED META-WEIGHTS")
+print("FUSING 50-FOLD SUPER-LEARNER TEST PREDICTIONS")
 print("============================================")
 
-# Convert OOF probabilities to Logit Space
-oof_logits = np.zeros_like(oof_probabilities)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+mean_50fold_test_logits = np.mean(all_superlearner_test_logits, axis=0)
+final_probabilities = 1.0 / (1.0 + np.exp(-mean_50fold_test_logits))
 
-# Solve Non-Negative Least Squares (w_i >= 0)
-nnls_meta = LinearRegression(positive=True, fit_intercept=True)
-nnls_meta.fit(oof_logits, y)
-
-raw_weights = nnls_meta.coef_
-sum_weights = np.sum(raw_weights)
-normalized_weights = raw_weights / sum_weights if sum_weights > 0 else np.ones(N_MODELS) / N_MODELS
-
-print("Learned Non-Negative Meta-Weights:")
-weight_summary = pd.DataFrame({
-    "Base Model": model_names,
-    "Raw Weight": raw_weights,
-    "Normalized %": normalized_weights * 100
-}).sort_values(by="Normalized %", ascending=False).reset_index(drop=True)
-
-print(weight_summary.to_string(index=False))
-
-# Calculate Natural Calibrated OOF Score (Zero Artificial Shifts)
-stacked_oof_logits = np.dot(oof_logits, normalized_weights)
-stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
-stacked_oof_auc = roc_auc_score(y, stacked_oof_probs)
-
-print(f"\n🏆 Unified Cluster-SEM Super-Learner Stacked OOF AUC: {stacked_oof_auc:.5f}")
+mean_oof_score = np.mean(all_seed_oof_scores)
+print(f"Mean 50-Fold Repeated Stacked OOF AUC: {mean_oof_score:.5f}")
 
 
 # ============================================================
-# 7. NATURAL INFERENCE ON TEST SET
-# ============================================================
-
-print("\nGenerating final test predictions via Natural NNLS Stacking...")
-
-avg_test_probs = test_fold_predictions.mean(axis=2)
-test_logits = np.zeros_like(avg_test_probs)
-
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
-
-final_test_logits = np.dot(test_logits, normalized_weights)
-
-# Natural Logistic Sigmoid (Preserves exact Exp 68 probability calibration)
-final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
-
-
-# ============================================================
-# 8. VALIDATE & SAVE SUBMISSION FILE
+# 7. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -386,7 +322,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp90_unified_nnls_cluster_sem.csv"
+output_file = "submission_exp91_ultratitan_50fold_nnls.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -397,11 +333,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 9. SUMMARY & BENCHMARKS
+# 8. SUMMARY & BENCHMARKS
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 90 COMPLETE")
+print("EXPERIMENT 91 COMPLETE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -416,8 +352,8 @@ print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
 print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 68 5-Fold NNLS Super Learner    : 0.66054 (Personal Best)")
-print(f"Exp 90 Unified Cluster-SEM Super    : OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print("Exp 68 Single 5-Fold NNLS           : 0.66054 (Personal Best)")
+print(f"Exp 91 50-Fold Multi-Seed Ultra-NNLS: Mean OOF = {mean_oof_score:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
