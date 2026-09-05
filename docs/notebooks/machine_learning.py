@@ -1,8 +1,11 @@
 # ============================================================
-# EXPERIMENT 99 — ENTROPY-BOUNDED SIMPLEX SUPER-LEARNER
-# (STRICT DIVERSITY BOUNDS + PURE SEM LATENT CORE + DUAL ACTIVATION MLPs)
+# EXPERIMENT 100 — THE CENTURION GRAND MASTER FINALE
+# (CURATED AUTOGLUON ON SEM MANIFOLD + ELASTICNET + DEEP MLPs + SIMPLEX NNLS)
 # ============================================================
 
+import os
+import shutil
+import tempfile
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -10,26 +13,33 @@ from scipy.optimize import minimize
 import warnings
 warnings.filterwarnings("ignore")
 
+# 1. Check for AutoGluon availability
+try:
+    from autogluon.tabular import TabularDataset, TabularPredictor
+    HAS_AUTOGLUON = True
+except ImportError:
+    HAS_AUTOGLUON = False
+
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, log_loss
 
 
 print("============================================")
-print("EXPERIMENT 99")
-print("ENTROPY-BOUNDED SIMPLEX SUPER-LEARNER")
+print("EXPERIMENT 100 — THE CENTURION FINALE")
+print(f"AutoGluon Engine Available: {HAS_AUTOGLUON}")
 print("============================================")
 
 
 # ============================================================
-# 1. DIRECTORY PATHS & DATA LOADING
+# 1. DIRECTORY PATHS & CLEAN LOCAL MODEL DIRECTORY
 # ============================================================
 
 CURRENT_DIR = Path.cwd()
@@ -38,6 +48,15 @@ DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
+# Local temp directory to prevent Windows OneDrive file locks
+MODEL_SAVE_PATH = str(Path(tempfile.gettempdir()) / "autogluon_exp100_centurion")
+
+if Path(MODEL_SAVE_PATH).exists():
+    try:
+        shutil.rmtree(MODEL_SAVE_PATH, ignore_errors=True)
+    except Exception:
+        pass
+
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
@@ -45,7 +64,7 @@ target = "employed_status"
 
 
 # ============================================================
-# 2. EXACT WINNING 0.66054 SEM FEATURE PIPELINE
+# 2. EXACT PROVEN 0.66054 SEM FEATURE PIPELINE
 # ============================================================
 
 def parse_matric_band(val):
@@ -153,6 +172,7 @@ def extract_pure_sem_features(train_df, test_df):
     return tr, te
 
 
+print("\nExtracting Pure SEM Latent Features...")
 train_sem, test_sem = extract_pure_sem_features(train_raw, test_raw)
 common_cols = [c for c in train_sem.columns if c in test_sem.columns and c != target]
 
@@ -174,8 +194,59 @@ print(f"Full Dataset: {len(X)} observations | {len(numerical_features)} numerica
 
 
 # ============================================================
-# 3. BASE CANDIDATE POOL (ELASTICNET + MULTI-ACTIVATION MLPs)
+# 3. PHASE 1: CURATED AUTOGLUON GBDT & PYTORCH ENGINE
 # ============================================================
+
+ag_oof_probs = None
+ag_test_probs = None
+
+if HAS_AUTOGLUON:
+    print("\n============================================")
+    print("PHASE 1: TRAINING CURATED AUTOGLUON ENGINE (LIGHTGBM + CATBOOST + PYTORCH)")
+    print("============================================")
+
+    # Clean dataset without text n-gram columns
+    ag_train = TabularDataset(pd.concat([X, y], axis=1))
+    ag_test = TabularDataset(X_test)
+
+    # Curated model hyperparameters: strictly regularized trees & PyTorch NN (no FastAI, no unregularized RF)
+    curated_hyperparameters = {
+        'GBM': [{'learning_rate': 0.03, 'max_depth': 5, 'num_leaves': 31, 'ag_args': {'name_suffix': '_Reg'}}],
+        'CAT': [{'depth': 5, 'learning_rate': 0.04, 'l2_leaf_reg': 3.0, 'ag_args': {'name_suffix': '_Reg'}}],
+        'NN_TORCH': [{'num_layers': 3, 'hidden_size': 128, 'dropout_prob': 0.15, 'learning_rate': 0.001}]
+    }
+
+    try:
+        predictor = TabularPredictor(
+            label=target,
+            eval_metric="roc_auc",
+            problem_type="binary",
+            path=MODEL_SAVE_PATH
+        ).fit(
+            train_data=ag_train,
+            hyperparameters=curated_hyperparameters,
+            time_limit=300,                  # 5 minutes
+            num_bag_folds=5,                 # 5-fold OOF CV
+            dynamic_stacking=False,          # Prevents Windows file locks
+            verbosity=1
+        )
+
+        ag_oof_probs = predictor.predict_proba_oof()[1].to_numpy()
+        ag_test_probs = predictor.predict_proba(ag_test)[1].to_numpy()
+        ag_oof_auc = roc_auc_score(y, ag_oof_probs)
+        print(f"✅ Curated AutoGluon Engine OOF ROC-AUC: {ag_oof_auc:.5f}")
+    except Exception as e:
+        print(f"⚠️ AutoGluon run skipped due to: {e}. Proceeding with pure SEM Super-Learner.")
+        HAS_AUTOGLUON = False
+
+
+# ============================================================
+# 4. PHASE 2: PROVEN 0.66054 NNLS SUPER-LEARNER ENGINE
+# ============================================================
+
+print("\n============================================")
+print("PHASE 2: TRAINING 5-FOLD EXP 68/93 PROVEN MODEL POOL")
+print("============================================")
 
 def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     transformers = []
@@ -187,155 +258,116 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     return ColumnTransformer(transformers=transformers)
 
 
-def get_base_model_dict(seed=42):
-    """Returns 8 high-performing models across ElasticNet and Multi-Activation MLPs."""
-    return {
-        "Quantile_ElasticNet_C010": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
-            True
-        ),
-        "Quantile_ElasticNet_C008": (
-            LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=seed),
-            True
-        ),
-        "Standard_ElasticNet_C010": (
-            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
-            False
-        ),
-        "Standard_LogReg_L2_C008": (
-            LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=seed),
-            False
-        ),
-        "MLP_Deep_128_64": (
-            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 50),
-            False
-        ),
-        "MLP_Medium_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed),
-            False
-        ),
-        "MLP_Wide_256_128": (
-            MLPClassifier(hidden_layer_sizes=(256, 128), activation="relu", solver="adam", alpha=0.020,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 100),
-            False
-        ),
-        "MLP_Tanh_64_32": (
-            MLPClassifier(hidden_layer_sizes=(64, 32), activation="tanh", solver="adam", alpha=0.010,
-                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
-                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 150),
-            False
-        )
-    }
+proven_base_models = {
+    "Quantile_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=42), True),
+    "Quantile_ElasticNet_C008": (LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=42), True),
+    "Standard_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=42), False),
+    "Standard_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=42), False),
+    "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015, batch_size=128, max_iter=400, early_stopping=True, random_state=42), False),
+    "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010, batch_size=128, max_iter=400, early_stopping=True, random_state=42), False)
+}
 
-
-# ============================================================
-# 4. 5-FOLD OOF PROBABILITY GENERATION
-# ============================================================
-
-print("\n============================================")
-print("GENERATING 5-FOLD OOF BASE PREDICTIONS")
-print("============================================")
-
+m_names = list(proven_base_models.keys())
+N_MODELS = len(m_names)
 N_SPLITS = 5
 skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-model_names = list(get_base_model_dict(seed=42).keys())
-N_MODELS = len(model_names)
-
-oof_probabilities = np.zeros((len(X), N_MODELS))
-test_fold_predictions = np.zeros((len(X_test), N_MODELS, N_SPLITS))
+sem_oof_probs = np.zeros((len(X), N_MODELS))
+sem_test_fold_preds = np.zeros((len(X_test), N_MODELS, N_SPLITS))
 
 for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
     X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
-    models_dict = get_base_model_dict(seed=42 + fold * 10)
-
-    for m_idx, (m_name, (model_obj, use_quantile)) in enumerate(models_dict.items()):
-        preprocessor = build_preprocessor(numerical_features, categorical_features, use_quantile=use_quantile)
-        pipe = Pipeline([("preprocessor", preprocessor), ("model", model_obj)])
+    for m_idx, (m_name, (m_obj, use_q)) in enumerate(proven_base_models.items()):
+        preproc = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
+        pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
         pipe.fit(X_tr_f, y_tr_f)
         
-        oof_probabilities[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        test_fold_predictions[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+        sem_oof_probs[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+        sem_test_fold_preds[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
 
-    print(f"  -> Fold {fold + 1}/{N_SPLITS} Complete.")
+sem_avg_test_probs = sem_test_fold_preds.mean(axis=2)
 
 
 # ============================================================
-# 5. DIVERSITY-BOUNDED SIMPLEX CONVEX OPTIMIZER (SLSQP)
+# 5. PHASE 3: SIMPLEX CONVEX META-OPTIMIZATION (SLSQP LOG-LOSS)
 # ============================================================
 
 print("\n============================================")
-print("FITTING DIVERSITY-BOUNDED SIMPLEX CONVEX META-LEARNER")
+print("PHASE 3: SIMPLEX CONVEX OPTIMIZATION (SLSQP CROSS-ENTROPY)")
 print("============================================")
 
-# Convert OOF & Test Probabilities to Logit Space
-oof_logits = np.zeros_like(oof_probabilities)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(oof_probabilities[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+# Combine candidate pool: Base SEM Models (+ AutoGluon if available)
+if HAS_AUTOGLUON and ag_oof_probs is not None:
+    all_oof_probs = np.hstack([sem_oof_probs, ag_oof_probs.reshape(-1, 1)])
+    all_test_probs = np.hstack([sem_avg_test_probs, ag_test_probs.reshape(-1, 1)])
+    all_model_names = m_names + ["Curated_AutoGluon_Engine"]
+else:
+    all_oof_probs = sem_oof_probs
+    all_test_probs = sem_avg_test_probs
+    all_model_names = m_names
 
-avg_test_probs = test_fold_predictions.mean(axis=2)
-test_logits = np.zeros_like(avg_test_probs)
-for m_idx in range(N_MODELS):
-    p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+n_total_candidates = len(all_model_names)
+
+# Convert OOF & Test Probabilities to Logit Space
+oof_logits = np.zeros_like(all_oof_probs)
+test_logits = np.zeros_like(all_test_probs)
+
+for m_idx in range(n_total_candidates):
+    p_cl_oof = np.clip(all_oof_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+    oof_logits[:, m_idx] = np.log(p_cl_oof / (1.0 - p_cl_oof))
+    p_cl_te = np.clip(all_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+    test_logits[:, m_idx] = np.log(p_cl_te / (1.0 - p_cl_te))
 
 y_true_arr = y.to_numpy()
 
-# Simplex Log-Loss with Entropy Regularization to prevent single-model domination
-def bounded_simplex_objective(weights, z_matrix, y_true, tau=0.002):
+# SLSQP Simplex Log-Loss Objective: min -sum(y*log(p) + (1-y)*log(1-p)) s.t. w >= 0, sum(w) = 1
+def simplex_logloss_objective(weights, z_matrix, y_true):
     z_blend = np.dot(z_matrix, weights)
     p_blend = np.clip(1.0 / (1.0 + np.exp(-z_blend)), 1e-7, 1.0 - 1e-7)
-    entropy = -np.sum(weights * np.log(weights + 1e-12))
-    return log_loss(y_true, p_blend) - tau * entropy
+    return log_loss(y_true, p_blend)
 
-# Bounds: Enforces 0.02 <= w_i <= 0.40 (forces cooperation between linear and neural models)
-bounds_simplex = [(0.02, 0.40) for _ in range(N_MODELS)]
-constraints_simplex = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
-w_init = np.ones(N_MODELS) / N_MODELS
+constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
+bounds = [(0.0, 1.0) for _ in range(n_total_candidates)]
+w_init = np.ones(n_total_candidates) / n_total_candidates
 
-opt_result = minimize(
-    bounded_simplex_objective,
+opt_res = minimize(
+    simplex_logloss_objective,
     w_init,
-    args=(oof_logits, y_true_arr, 0.002),
+    args=(oof_logits, y_true_arr),
     method='SLSQP',
-    bounds=bounds_simplex,
-    constraints=constraints_simplex,
+    bounds=bounds,
+    constraints=constraints,
     options={'maxiter': 500, 'ftol': 1e-9}
 )
 
-optimal_weights = opt_result.x / np.sum(opt_result.x)
+optimal_simplex_weights = opt_res.x / np.sum(opt_res.x)
 
+# Display Learned Weights
 weight_table = pd.DataFrame({
-    "Base Model": model_names,
-    "Bounded Simplex Weight": optimal_weights,
-    "Allocation %": optimal_weights * 100
+    "Candidate Model": all_model_names,
+    "Simplex Weight": optimal_simplex_weights,
+    "Allocation %": optimal_simplex_weights * 100
 }).sort_values(by="Allocation %", ascending=False).reset_index(drop=True)
 
-print("Learned Bounded Simplex Weights:")
+print("Learned Simplex Optimal Weights:")
 print(weight_table.to_string(index=False))
 
-stacked_oof_logits = np.dot(oof_logits, optimal_weights)
+stacked_oof_logits = np.dot(oof_logits, optimal_simplex_weights)
 stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
-stacked_oof_auc = roc_auc_score(y_true_arr, stacked_oof_probs)
+final_oof_auc = roc_auc_score(y_true_arr, stacked_oof_probs)
 
-print(f"\n🏆 Exp 99 Bounded Simplex Stacked OOF AUC: {stacked_oof_auc:.5f}")
+print(f"\n🏆 Centurion Masterpiece Stacked OOF ROC-AUC: {final_oof_auc:.5f}")
 
 
 # ============================================================
 # 6. INFERENCE ON TEST SET
 # ============================================================
 
-print("\nGenerating final test predictions via Bounded Simplex Stacker...")
+print("\nGenerating final test predictions via Centurion Simplex Stacker...")
 
-final_test_logits = np.dot(test_logits, optimal_weights)
+final_test_logits = np.dot(test_logits, optimal_simplex_weights)
 final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
 final_probabilities = np.clip(final_probabilities, 1e-6, 1.0 - 1e-6)
 
@@ -351,7 +383,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp99_entropy_bounded_simplex.csv"
+output_file = "submission_exp100_centurion_masterpiece.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -362,11 +394,11 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 8. SUMMARY & BENCHMARKS
+# 8. SUMMARY & INSPECTION
 # ============================================================
 
 print("\n============================================")
-print("EXPERIMENT 99 COMPLETE")
+print("EXPERIMENT 100 COMPLETE — THE CENTURION MILESTONE")
 print("============================================")
 print(f"Saved: {output_file}")
 print(f"Rows: {len(submission)}")
@@ -380,8 +412,10 @@ print(submission.head(10))
 print("\n============================================")
 print("BENCHMARKS")
 print("============================================")
-print("Exp 68 / 93 Dual Peak Baseline     : 0.66054")
-print(f"Exp 99 Bounded Simplex Superlearner: OOF Val = {stacked_oof_auc:.5f} (Ready for submission)")
+print("Exp 30 Baseline Logistic            : 0.59229")
+print("Exp 59 Pure SEM Latent Titan        : 0.65832")
+print("Exp 68 / 93 Dual Peak Baseline      : 0.66054")
+print(f"Exp 100 Centurion Masterpiece       : OOF Val = {final_oof_auc:.5f} (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
