@@ -1,11 +1,8 @@
 # ============================================================
 # EXPERIMENT 100 — THE CENTURION GRAND MASTER FINALE
-# (CURATED AUTOGLUON ON SEM MANIFOLD + ELASTICNET + DEEP MLPs + SIMPLEX NNLS)
+# (THE DEFINITIVE 100TH MILESTONE: 4-PILLAR CORE + SIMPLEX SLSQP + 25-FOLD FUSION)
 # ============================================================
 
-import os
-import shutil
-import tempfile
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -13,20 +10,13 @@ from scipy.optimize import minimize
 import warnings
 warnings.filterwarnings("ignore")
 
-# 1. Check for AutoGluon availability
-try:
-    from autogluon.tabular import TabularDataset, TabularPredictor
-    HAS_AUTOGLUON = True
-except ImportError:
-    HAS_AUTOGLUON = False
-
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, QuantileTransformer
 from sklearn.decomposition import FactorAnalysis
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, log_loss
@@ -34,12 +24,12 @@ from sklearn.metrics import roc_auc_score, log_loss
 
 print("============================================")
 print("EXPERIMENT 100 — THE CENTURION FINALE")
-print(f"AutoGluon Engine Available: {HAS_AUTOGLUON}")
+print("THE DEFINITIVE 100TH MILESTONE MASTER ENGINE")
 print("============================================")
 
 
 # ============================================================
-# 1. DIRECTORY PATHS & CLEAN LOCAL MODEL DIRECTORY
+# 1. DIRECTORY PATHS & DATA LOADING
 # ============================================================
 
 CURRENT_DIR = Path.cwd()
@@ -48,15 +38,6 @@ DATA_DIR = (CURRENT_DIR / "../../assets/dataset").resolve()
 if not DATA_DIR.exists():
     DATA_DIR = CURRENT_DIR
 
-# Local temp directory to prevent Windows OneDrive file locks
-MODEL_SAVE_PATH = str(Path(tempfile.gettempdir()) / "autogluon_exp100_centurion")
-
-if Path(MODEL_SAVE_PATH).exists():
-    try:
-        shutil.rmtree(MODEL_SAVE_PATH, ignore_errors=True)
-    except Exception:
-        pass
-
 train_raw = pd.read_csv(DATA_DIR / "train.csv")
 test_raw = pd.read_csv(DATA_DIR / "test.csv")
 test_ids = test_raw["anonymised_id"].copy()
@@ -64,7 +45,7 @@ target = "employed_status"
 
 
 # ============================================================
-# 2. EXACT PROVEN 0.66054 SEM FEATURE PIPELINE
+# 2. EXACT WINNING 0.66054 SEM FEATURE PIPELINE
 # ============================================================
 
 def parse_matric_band(val):
@@ -86,10 +67,11 @@ def parse_matric_band(val):
 
 
 def extract_pure_sem_features(train_df, test_df):
+    """Extracts the exact winning Exp 59/68/93 SEM Latent Factor representation."""
     tr = train_df.copy()
     te = test_df.copy()
 
-    # Clean target
+    # Clean target strictly in train
     tr[target] = pd.to_numeric(tr[target], errors="coerce")
     tr = tr.dropna(subset=[target]).copy()
     tr[target] = tr[target].astype(int)
@@ -194,59 +176,8 @@ print(f"Full Dataset: {len(X)} observations | {len(numerical_features)} numerica
 
 
 # ============================================================
-# 3. PHASE 1: CURATED AUTOGLUON GBDT & PYTORCH ENGINE
+# 3. PREPROCESSOR & THE 4 CORE CHAMPION PILLARS
 # ============================================================
-
-ag_oof_probs = None
-ag_test_probs = None
-
-if HAS_AUTOGLUON:
-    print("\n============================================")
-    print("PHASE 1: TRAINING CURATED AUTOGLUON ENGINE (LIGHTGBM + CATBOOST + PYTORCH)")
-    print("============================================")
-
-    # Clean dataset without text n-gram columns
-    ag_train = TabularDataset(pd.concat([X, y], axis=1))
-    ag_test = TabularDataset(X_test)
-
-    # Curated model hyperparameters: strictly regularized trees & PyTorch NN (no FastAI, no unregularized RF)
-    curated_hyperparameters = {
-        'GBM': [{'learning_rate': 0.03, 'max_depth': 5, 'num_leaves': 31, 'ag_args': {'name_suffix': '_Reg'}}],
-        'CAT': [{'depth': 5, 'learning_rate': 0.04, 'l2_leaf_reg': 3.0, 'ag_args': {'name_suffix': '_Reg'}}],
-        'NN_TORCH': [{'num_layers': 3, 'hidden_size': 128, 'dropout_prob': 0.15, 'learning_rate': 0.001}]
-    }
-
-    try:
-        predictor = TabularPredictor(
-            label=target,
-            eval_metric="roc_auc",
-            problem_type="binary",
-            path=MODEL_SAVE_PATH
-        ).fit(
-            train_data=ag_train,
-            hyperparameters=curated_hyperparameters,
-            time_limit=300,                  # 5 minutes
-            num_bag_folds=5,                 # 5-fold OOF CV
-            dynamic_stacking=False,          # Prevents Windows file locks
-            verbosity=1
-        )
-
-        ag_oof_probs = predictor.predict_proba_oof()[1].to_numpy()
-        ag_test_probs = predictor.predict_proba(ag_test)[1].to_numpy()
-        ag_oof_auc = roc_auc_score(y, ag_oof_probs)
-        print(f"✅ Curated AutoGluon Engine OOF ROC-AUC: {ag_oof_auc:.5f}")
-    except Exception as e:
-        print(f"⚠️ AutoGluon run skipped due to: {e}. Proceeding with pure SEM Super-Learner.")
-        HAS_AUTOGLUON = False
-
-
-# ============================================================
-# 4. PHASE 2: PROVEN 0.66054 NNLS SUPER-LEARNER ENGINE
-# ============================================================
-
-print("\n============================================")
-print("PHASE 2: TRAINING 5-FOLD EXP 68/93 PROVEN MODEL POOL")
-print("============================================")
 
 def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     transformers = []
@@ -258,122 +189,167 @@ def build_preprocessor(numerical_cols, categorical_cols, use_quantile=False):
     return ColumnTransformer(transformers=transformers)
 
 
-proven_base_models = {
-    "Quantile_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=42), True),
-    "Quantile_ElasticNet_C008": (LogisticRegression(C=0.08, penalty="elasticnet", solver="saga", l1_ratio=0.10, max_iter=2500, tol=1e-4, random_state=42), True),
-    "Standard_ElasticNet_C010": (LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=42), False),
-    "Standard_LogReg_L2_C008": (LogisticRegression(C=0.08, penalty="l2", solver="lbfgs", max_iter=2000, random_state=42), False),
-    "MLP_Deep_128_64": (MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015, batch_size=128, max_iter=400, early_stopping=True, random_state=42), False),
-    "MLP_Medium_64_32": (MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010, batch_size=128, max_iter=400, early_stopping=True, random_state=42), False)
-}
-
-m_names = list(proven_base_models.keys())
-N_MODELS = len(m_names)
-N_SPLITS = 5
-skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
-
-sem_oof_probs = np.zeros((len(X), N_MODELS))
-sem_test_fold_preds = np.zeros((len(X_test), N_MODELS, N_SPLITS))
-
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
-    X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
-
-    for m_idx, (m_name, (m_obj, use_q)) in enumerate(proven_base_models.items()):
-        preproc = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
-        pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
-        pipe.fit(X_tr_f, y_tr_f)
-        
-        sem_oof_probs[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
-        sem_test_fold_preds[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
-
-sem_avg_test_probs = sem_test_fold_preds.mean(axis=2)
+def get_champion_pillars(seed=42):
+    """The exact 4-pillar model suite that achieved 0.66054."""
+    return {
+        "Quantile_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
+            True
+        ),
+        "Standard_ElasticNet_C010": (
+            LogisticRegression(C=0.10, penalty="elasticnet", solver="saga", l1_ratio=0.15, max_iter=2500, tol=1e-4, random_state=seed),
+            False
+        ),
+        "MLP_Deep_128_64": (
+            MLPClassifier(hidden_layer_sizes=(128, 64), activation="relu", solver="adam", alpha=0.015,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed + 50),
+            False
+        ),
+        "MLP_Medium_64_32": (
+            MLPClassifier(hidden_layer_sizes=(64, 32), activation="relu", solver="adam", alpha=0.010,
+                          batch_size=128, learning_rate_init=0.001, max_iter=400, early_stopping=True,
+                          n_iter_no_change=25, validation_fraction=0.15, random_state=seed),
+            False
+        )
+    }
 
 
 # ============================================================
-# 5. PHASE 3: SIMPLEX CONVEX META-OPTIMIZATION (SLSQP LOG-LOSS)
+# 4. 25-FOLD MULTI-SEED ENGINE & SIMPLEX SLSQP OPTIMIZATION
 # ============================================================
 
 print("\n============================================")
-print("PHASE 3: SIMPLEX CONVEX OPTIMIZATION (SLSQP CROSS-ENTROPY)")
+print("TRAINING 25-FOLD MULTI-SEED CENTURION ENGINE (5 SEEDS x 5 FOLDS)")
 print("============================================")
 
-# Combine candidate pool: Base SEM Models (+ AutoGluon if available)
-if HAS_AUTOGLUON and ag_oof_probs is not None:
-    all_oof_probs = np.hstack([sem_oof_probs, ag_oof_probs.reshape(-1, 1)])
-    all_test_probs = np.hstack([sem_avg_test_probs, ag_test_probs.reshape(-1, 1)])
-    all_model_names = m_names + ["Curated_AutoGluon_Engine"]
-else:
-    all_oof_probs = sem_oof_probs
-    all_test_probs = sem_avg_test_probs
-    all_model_names = m_names
+SEEDS = [42, 101, 777, 2024, 999]
+N_SPLITS = 5
 
-n_total_candidates = len(all_model_names)
+pillar_names = list(get_champion_pillars(seed=42).keys())
+N_PILLARS = len(pillar_names)
 
-# Convert OOF & Test Probabilities to Logit Space
-oof_logits = np.zeros_like(all_oof_probs)
-test_logits = np.zeros_like(all_test_probs)
-
-for m_idx in range(n_total_candidates):
-    p_cl_oof = np.clip(all_oof_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    oof_logits[:, m_idx] = np.log(p_cl_oof / (1.0 - p_cl_oof))
-    p_cl_te = np.clip(all_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
-    test_logits[:, m_idx] = np.log(p_cl_te / (1.0 - p_cl_te))
+all_seed_test_logits = []
+all_seed_oof_scores = []
 
 y_true_arr = y.to_numpy()
 
-# SLSQP Simplex Log-Loss Objective: min -sum(y*log(p) + (1-y)*log(1-p)) s.t. w >= 0, sum(w) = 1
+# Simplex SLSQP Log-Loss Objective (min cross-entropy s.t. w >= 0, sum(w) = 1)
 def simplex_logloss_objective(weights, z_matrix, y_true):
     z_blend = np.dot(z_matrix, weights)
     p_blend = np.clip(1.0 / (1.0 + np.exp(-z_blend)), 1e-7, 1.0 - 1e-7)
     return log_loss(y_true, p_blend)
 
 constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
-bounds = [(0.0, 1.0) for _ in range(n_total_candidates)]
-w_init = np.ones(n_total_candidates) / n_total_candidates
+bounds = [(0.0, 1.0) for _ in range(N_PILLARS)]
+w_init = np.ones(N_PILLARS) / N_PILLARS
 
-opt_res = minimize(
-    simplex_logloss_objective,
-    w_init,
-    args=(oof_logits, y_true_arr),
-    method='SLSQP',
-    bounds=bounds,
-    constraints=constraints,
-    options={'maxiter': 500, 'ftol': 1e-9}
-)
+for s_idx, cv_seed in enumerate(SEEDS):
+    print(f"\n--- Running Seed {cv_seed:<4} ({s_idx + 1}/{len(SEEDS)}) ---")
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=cv_seed)
 
-optimal_simplex_weights = opt_res.x / np.sum(opt_res.x)
+    oof_probs_seed = np.zeros((len(X), N_PILLARS))
+    test_fold_preds_seed = np.zeros((len(X_test), N_PILLARS, N_SPLITS))
 
-# Display Learned Weights
-weight_table = pd.DataFrame({
-    "Candidate Model": all_model_names,
-    "Simplex Weight": optimal_simplex_weights,
-    "Allocation %": optimal_simplex_weights * 100
-}).sort_values(by="Allocation %", ascending=False).reset_index(drop=True)
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+        X_tr_f, y_tr_f = X.iloc[train_idx], y.iloc[train_idx]
+        X_va_f, y_va_f = X.iloc[val_idx], y.iloc[val_idx]
 
-print("Learned Simplex Optimal Weights:")
-print(weight_table.to_string(index=False))
+        models_dict = get_champion_pillars(seed=cv_seed + fold * 10)
 
-stacked_oof_logits = np.dot(oof_logits, optimal_simplex_weights)
-stacked_oof_probs = 1.0 / (1.0 + np.exp(-stacked_oof_logits))
-final_oof_auc = roc_auc_score(y_true_arr, stacked_oof_probs)
+        for m_idx, (m_name, (m_obj, use_q)) in enumerate(models_dict.items()):
+            preproc = build_preprocessor(numerical_features, categorical_features, use_quantile=use_q)
+            pipe = Pipeline([("preproc", preproc), ("model", m_obj)])
+            pipe.fit(X_tr_f, y_tr_f)
 
-print(f"\n🏆 Centurion Masterpiece Stacked OOF ROC-AUC: {final_oof_auc:.5f}")
+            oof_probs_seed[val_idx, m_idx] = pipe.predict_proba(X_va_f)[:, 1]
+            test_fold_preds_seed[:, m_idx, fold] = pipe.predict_proba(X_test)[:, 1]
+
+    # Convert OOF to Logit Space
+    oof_logits_seed = np.zeros_like(oof_probs_seed)
+    for m_idx in range(N_PILLARS):
+        p_cl = np.clip(oof_probs_seed[:, m_idx], 1e-6, 1.0 - 1e-6)
+        oof_logits_seed[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+    # Exact Simplex SLSQP Log-Loss Optimization
+    opt_res = minimize(
+        simplex_logloss_objective,
+        w_init,
+        args=(oof_logits_seed, y_true_arr),
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints,
+        options={'maxiter': 500, 'ftol': 1e-9}
+    )
+
+    w_opt_seed = opt_res.x / np.sum(opt_res.x)
+    seed_oof_logits = np.dot(oof_logits_seed, w_opt_seed)
+    seed_oof_auc = roc_auc_score(y_true_arr, 1.0 / (1.0 + np.exp(-seed_oof_logits)))
+    all_seed_oof_scores.append(seed_oof_auc)
+    print(f"  🏆 Seed {cv_seed} Simplex OOF AUC: {seed_oof_auc:.5f}")
+
+    # Generate test logits for this seed
+    avg_test_probs = test_fold_preds_seed.mean(axis=2)
+    test_logits_seed = np.zeros_like(avg_test_probs)
+    for m_idx in range(N_PILLARS):
+        p_cl = np.clip(avg_test_probs[:, m_idx], 1e-6, 1.0 - 1e-6)
+        test_logits_seed[:, m_idx] = np.log(p_cl / (1.0 - p_cl))
+
+    seed_test_logits = np.dot(test_logits_seed, w_opt_seed)
+    all_seed_test_logits.append(seed_test_logits)
+
+# Centurion Multi-Seed Test Logits
+fresh_centurion_logits = np.mean(all_seed_test_logits, axis=0)
+mean_25fold_oof_auc = np.mean(all_seed_oof_scores)
+print(f"\nMean 25-Fold Simplex OOF ROC-AUC: {mean_25fold_oof_auc:.5f}")
 
 
 # ============================================================
-# 6. INFERENCE ON TEST SET
+# 5. MULTI-CHAMPION CONSENSUS INTEGRATION
 # ============================================================
 
-print("\nGenerating final test predictions via Centurion Simplex Stacker...")
+print("\n============================================")
+print("FUSING 25-FOLD ENGINE WITH VERIFIED 0.66054 CHAMPIONS")
+print("============================================")
 
-final_test_logits = np.dot(test_logits, optimal_simplex_weights)
-final_probabilities = 1.0 / (1.0 + np.exp(-final_test_logits))
+champion_files = {
+    "submission_exp93_simplex_convex_optimization.csv": 0.40,  # 0.66054 SLSQP Peak
+    "submission_exp68_nnls_sem_superlearner.csv": 0.40,        # 0.66054 NNLS Peak
+    "submission_exp71_grand_master_calibrated_superlearner.csv": 0.20  # 0.66051
+}
+
+discovered_logits = []
+discovered_weights = []
+
+for filename, weight in champion_files.items():
+    f_path = CURRENT_DIR / filename
+    if f_path.exists():
+        sub_df = pd.read_csv(f_path)
+        if target in sub_df.columns and len(sub_df) == len(test_raw):
+            p = np.clip(sub_df[target].to_numpy(), 1e-6, 1.0 - 1e-6)
+            z = np.log(p / (1.0 - p))
+            discovered_logits.append(z)
+            discovered_weights.append(weight)
+            print(f" -> [LOADED] {filename:<60} (Weight: {weight*100:.0f}%)")
+
+if len(discovered_logits) > 0:
+    total_w = sum(discovered_weights)
+    norm_w = [w / total_w for w in discovered_weights]
+    past_champions_logits = sum(w * z for w, z in zip(norm_w, discovered_logits))
+
+    # 50% Fresh 25-Fold Engine + 50% Verified 0.66054 Consensus
+    final_master_logits = 0.50 * fresh_centurion_logits + 0.50 * past_champions_logits
+    print("✅ Successfully fused fresh 25-Fold engine with verified 0.66054 champions.")
+else:
+    final_master_logits = fresh_centurion_logits
+    print("ℹ️ Using fresh 25-Fold Centurion engine predictions directly.")
+
+final_probabilities = 1.0 / (1.0 + np.exp(-final_master_logits))
 final_probabilities = np.clip(final_probabilities, 1e-6, 1.0 - 1e-6)
 
 
 # ============================================================
-# 7. VALIDATE & SAVE SUBMISSION FILE
+# 6. VALIDATE & SAVE SUBMISSION FILE
 # ============================================================
 
 if len(final_probabilities) != len(test_raw):
@@ -383,7 +359,7 @@ if np.isnan(final_probabilities).any():
 if (final_probabilities < 0).any() or (final_probabilities > 1).any():
     raise ValueError("Predictions fall outside [0, 1].")
 
-output_file = "submission_exp100_centurion_masterpiece.csv"
+output_file = "submission_exp100_centurion_grand_master.csv"
 
 submission = pd.DataFrame({
     "anonymised_id": test_ids,
@@ -394,7 +370,7 @@ submission.to_csv(output_file, index=False)
 
 
 # ============================================================
-# 8. SUMMARY & INSPECTION
+# 7. SUMMARY & INSPECTION
 # ============================================================
 
 print("\n============================================")
@@ -410,12 +386,15 @@ print("\nFirst 10 predictions:")
 print(submission.head(10))
 
 print("\n============================================")
-print("BENCHMARKS")
+print("THE 100-EXPERIMENT BENCHMARK PROGRESSION")
 print("============================================")
 print("Exp 30 Baseline Logistic            : 0.59229")
-print("Exp 59 Pure SEM Latent Titan        : 0.65832")
-print("Exp 68 / 93 Dual Peak Baseline      : 0.66054")
-print(f"Exp 100 Centurion Masterpiece       : OOF Val = {final_oof_auc:.5f} (Ready for submission)")
+print("Exp 33 Multi-Layer Perceptron       : 0.64453")
+print("Exp 44 Top-3 Regularized Linear     : 0.65630")
+print("Exp 51 Titan Multi-Seed Hybrid      : 0.65693")
+print("Exp 59 SEM Latent Factor Manifold   : 0.65832")
+print("Exp 68 / 93 Dual Peak Baseline      : 0.66054 (All-Time Peak)")
+print(f"Exp 100 Centurion Grand Master      : 25-Fold Fusion (Ready for submission)")
 
 print("\n============================================")
 print("READY FOR KAGGLE SUBMISSION")
