@@ -11,3 +11,4 @@ train.csv
 submission_baseline.csv
 submission_upgraded.csv
 *.csv
+autogluon_merc_minds_model/
