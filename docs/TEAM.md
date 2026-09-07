@@ -17,7 +17,7 @@ MercMinds
 ## Linkedin Profiles
 - [Misha Dick](https://www.linkedin.com/in/misha-d-jacobs-3bb754321/)
 - [Entisaar Elfadl](https://www.linkedin.com/in/entisaar-elfadl-400744351/)
-- [Casey Hunter](https://www.linkedin.com/in/mikastudent/)
+- [Casey Hunter](https://www.linkedin.com/in/casey-hunter-833955434/)
 - [Moegamat Samsodien](https://www.linkedin.com/in/moegamatsamsodien/)
 
 
