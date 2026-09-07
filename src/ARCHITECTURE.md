@@ -98,11 +98,12 @@ Using external Canvas or charting libraries introduces dependency weight and ris
 Experiment tracking uses `localStorage` to save model metadata, versioning, run timestamp, notes, and AUC. On initialization, if no history is present, the app seeds historical benchmarks (XGBoost base, Logistic Baseline) to immediately provide a rich comparative view.
 * **Inline State Confirmations:** To operate safely in cross-origin iframe preview environments (where standard blocking `window.confirm()` APIs are restricted or blocked), we use explicit React-state confirmation indicators (`showClearConfirm` and `deletingId`). This eliminates blocking calls and allows elegant cancel/confirm actions.
 
-### 6. CSV Format Placeholders & Real Rounds Workspace (`/original_rounds/`)
-To help users format, place, and keep track of original datasets:
-* `/original_rounds/README.md`: Explains how the user can place and store their actual real-world validation datasets inside this folder in the repository.
-* `/original_rounds/place_real_ground_truth_here.csv`: Template file for mapping the real survey ground-truth answers.
-* `/original_rounds/place_real_predictions_here.csv`: Template file for mapping real model prediction probabilities.
+### 6. CSV Format & Real Rounds Workspace (`/original_rounds/`)
+The `original_rounds/` directory contains the committed historical practice datasets used by the dashboard:
+* `rounds_1_5.csv`, `rounds_1_6.csv`, and `rounds_1_7.csv`: Training data for the Round 6, 7, and 8 workflows.
+* `round_6.csv`, `round_7.csv`, and `round_8.csv`: Evaluation data for the corresponding practice rounds.
+
+Real competition files should be selected through the application's **Real Evaluation** upload flow rather than committed to this repository. Prediction files must contain `anonymised_id` and a probability-valued `employed_status` column; ground-truth files must contain the same ID column and binary employment outcomes.
 * The application provides a dual evaluation selector:
   1. **Practice Sandbox Mode**: For evaluating predictions against simulated rounds generated client-side.
   2. **Real Evaluation Mode**: For uploading and testing model results against original, real survey rounds.

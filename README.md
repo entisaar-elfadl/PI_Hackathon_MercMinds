@@ -31,16 +31,19 @@ This repository provides the base structure for:
 ## Repository Structure
 ```text
 ├── assets/
+│   └── dataset/
+│       ├── train.csv
+│       └── test.csv
 ├── demo/
 ├── docs/
 ├── scripts/
 ├── src/
-├── train.csv
-├── test.csv
 ├── README.md
 ├── LICENSE
 └── package.json
 ```
+
+The browser dashboard is a separate Vite application located in `src/`. See [docs/SETUP.md](docs/SETUP.md) for installation instructions and [docs/USAGE.md](docs/USAGE.md) for the evaluation workflow.
 
 ## Evaluation
 Submissions are evaluated using the Area Under the ROC Curve (AUC), which measures how well the model ranks participants by likelihood of being employed. A score closer to 1.0 indicates stronger discrimination.

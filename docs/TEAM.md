@@ -1,7 +1,7 @@
 # Team Information
 
-## ⚒️ Team Name
-``` c
+## Team Name
+```text
 MercMinds
 ```
 
@@ -9,12 +9,12 @@ MercMinds
 | Name     | Role                | Email |
 |----------|---------------------|-------------|
 | **Moegamat Samsodien**   | ML Engineering & Data Pipeline  | rashaadsm2004@gmail.com |
-| **Casey Leigh Hunter**   | Lead Machine Learning Engineer   | email |
+| **Casey Leigh Hunter**   | Lead Machine Learning Engineer   | Not provided |
 | **Entisaar Elfadl**   | Data Visualization & Results Presentation  | entisaarsuliman@gmail.com |
 | **Misha Dick**   | Research, Documentation & Experiment Tracking | mishadj1425@gmail.com |
 
 
-## Linkedin Profiles
+## LinkedIn Profiles
 - [Misha Dick](https://www.linkedin.com/in/misha-d-jacobs-3bb754321/)
 - [Entisaar Elfadl](https://www.linkedin.com/in/entisaar-elfadl-400744351/)
 - [Casey Hunter](https://www.linkedin.com/in/casey-hunter-833955434/)
@@ -22,6 +22,6 @@ MercMinds
 
 
 ## 📧 Other Contact Info
-- Portfilio : [Moegamat Samsodien](https://moegamat-samsodien-portfolio.vercel.app/)
+- Portfolio: [Moegamat Samsodien](https://moegamat-samsodien-portfolio.vercel.app/)
 
   
