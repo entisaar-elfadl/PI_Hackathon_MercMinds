@@ -9,7 +9,7 @@ MercMinds
 | Name     | Role                | Email |
 |----------|---------------------|-------------|
 | **Moegamat Samsodien**   | ML Engineering & Data Pipeline  | rashaadsm2004@gmail.com |
-| **Casey Leigh Hunter**   | Lead Machine Learning Engineer   | email |
+| **Casey Leigh Hunter**   | Lead Machine Learning Engineer   | hntcas004@myuct.ac.za |
 | **Entisaar Elfadl**   | Data Visualization & Results Presentation  | entisaarsuliman@gmail.com |
 | **Misha Dick**   | Research, Documentation & Experiment Tracking | mishadj1425@gmail.com |
 
